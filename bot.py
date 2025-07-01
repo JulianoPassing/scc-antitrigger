@@ -19,7 +19,7 @@ client = discord.Client(intents=intents)
 log_history = {}
 # --- PARÂMETROS ATUALIZADOS ---
 TIME_WINDOW_SECONDS = 120  # Janela de tempo em segundos
-LOG_COUNT_THRESHOLD = 6   # Número de logs para disparar o alerta
+LOG_COUNT_THRESHOLD = 2   # Número de logs para disparar o alerta
 
 def extrair_trecho(texto):
     match = re.search(r'(\*\*.*?added)', texto)
@@ -29,8 +29,11 @@ def extrair_trecho(texto):
 
 @client.event
 async def on_ready():
-    print(f'Bot Anti Trigger SCC conectado como {client.user}.')
-    print(f'MODO AVANÇADO: Detectando {LOG_COUNT_THRESHOLD} logs idênticos em {TIME_WINDOW_SECONDS} segundos.')
+    print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
+    print(f'📊 MODO AVANÇADO: Detectando {LOG_COUNT_THRESHOLD} logs idênticos em {TIME_WINDOW_SECONDS} segundos')
+    print(f'🎯 Canal monitorado: {TARGET_CHANNEL_ID}')
+    print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
+    print(f'✅ Bot online e monitorando...')
 
 @client.event
 async def on_message(message):
