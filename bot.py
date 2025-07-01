@@ -8,6 +8,13 @@ load_dotenv()
 TOKEN = os.getenv('TOKEN')
 TARGET_CHANNEL_ID = 1315448683348758529
 
+# Lista de canais para enviar alertas (ID do canal)
+ALERT_CHANNELS = [
+    1315448683348758529,  # Canal original
+    1387430519582494883,  # Canal adicional
+    # Adicione mais IDs de canais aqui
+]
+
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
@@ -32,6 +39,7 @@ async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
     print(f'📊 MODO AVANÇADO: Detectando {LOG_COUNT_THRESHOLD} logs idênticos em {TIME_WINDOW_SECONDS} segundos')
     print(f'🎯 Canal monitorado: {TARGET_CHANNEL_ID}')
+    print(f'📢 Canais de alerta: {len(ALERT_CHANNELS)} canais configurados')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'✅ Bot online e monitorando...')
 
@@ -81,14 +89,18 @@ async def on_message(message):
                 f"**{LOG_COUNT_THRESHOLD}** logs idênticos recebidos em menos de {TIME_WINDOW_SECONDS} segundos.\n"
                 f"```\n{log_key}\n```"
             )
-            try:
-                await message.channel.send(alert_message)
-                # Envia também para o canal 1387430519582494883
-                target_channel = client.get_channel(1387430519582494883)
-                if target_channel:
-                    await target_channel.send(alert_message)
-            except Exception as e:
-                print(f"ERRO AO ENVIAR ALERTA DE SPAM: {e}")
+            
+            # Enviar alerta para todos os canais configurados
+            for channel_id in ALERT_CHANNELS:
+                try:
+                    target_channel = client.get_channel(channel_id)
+                    if target_channel:
+                        await target_channel.send(alert_message)
+                        print(f"✅ Alerta enviado para canal: {channel_id}")
+                    else:
+                        print(f"❌ Canal não encontrado: {channel_id}")
+                except Exception as e:
+                    print(f"❌ ERRO ao enviar para canal {channel_id}: {e}")
 
             del log_history[log_key]
 
