@@ -88,9 +88,8 @@ async def on_message(message):
                 f"@everyone **ALERTA DE SPAM DETECTADO!**\n"
                 f"**{LOG_COUNT_THRESHOLD}** logs idênticos recebidos em menos de {TIME_WINDOW_SECONDS} segundos.\n"
                 f"\n**Trecho identificado:**\n```
-{log_key}\n``"
-                f"\n**Mensagem completa capturada:**\n"
-                f"```
+{log_key}\n```\n"
+                f"**Mensagem completa capturada:**\n```
 {texto_completo}\n```"
             )
             
