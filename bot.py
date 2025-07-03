@@ -87,7 +87,11 @@ async def on_message(message):
             alert_message = (
                 f"@everyone **ALERTA DE SPAM DETECTADO!**\n"
                 f"**{LOG_COUNT_THRESHOLD}** logs idênticos recebidos em menos de {TIME_WINDOW_SECONDS} segundos.\n"
-                f"```\n{log_key}\n```"
+                f"\n**Trecho identificado:**\n```
+{log_key}\n``"
+                f"\n**Mensagem completa capturada:**\n"
+                f"```
+{texto_completo}\n```"
             )
             
             # Enviar alerta para todos os canais configurados
