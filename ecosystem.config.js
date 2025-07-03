@@ -4,7 +4,7 @@ module.exports = {
       name: 'scc-antitrigger-bot',
       script: 'bot.py',
       interpreter: './venv/bin/python',
-      cwd: '/root/Desktop/scc-antitrigger',
+      cwd: '/home/juliano/Desktop/scc-antitrigger',
       env: {
         NODE_ENV: 'production'
       },
