@@ -1,10 +1,10 @@
 module.exports = {
   apps: [
     {
-      name: 'scc-antitrigger',
+      name: 'scc-antitrigger-bot',
       script: 'bot.py',
       interpreter: './venv/bin/python',
-      cwd: '/home/juliano/Desktop/scc-antitrigger',
+      cwd: '/root/Desktop/scc-antitrigger',
       env: {
         NODE_ENV: 'production'
       },

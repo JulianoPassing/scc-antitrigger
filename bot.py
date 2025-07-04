@@ -87,22 +87,19 @@ async def on_message(message):
             alert_message = (
                 f"@everyone **ALERTA DE SPAM DETECTADO!**\n"
                 f"**{LOG_COUNT_THRESHOLD}** logs idênticos recebidos em menos de {TIME_WINDOW_SECONDS} segundos.\n"
-                f"\n**Trecho identificado:**\n"
-                f"```\n{log_key}\n```\n"
-                f"**Mensagem completa capturada:**\n"
-                f"```\n{texto_completo}\n```"
+                f"```\n{log_key}\n```"
             )
             
             # Enviar alerta para todos os canais configurados
             for channel_id in ALERT_CHANNELS:
-                try:
+            try:
                     target_channel = client.get_channel(channel_id)
-                    if target_channel:
-                        await target_channel.send(alert_message)
+                if target_channel:
+                    await target_channel.send(alert_message)
                         print(f"✅ Alerta enviado para canal: {channel_id}")
                     else:
                         print(f"❌ Canal não encontrado: {channel_id}")
-                except Exception as e:
+            except Exception as e:
                     print(f"❌ ERRO ao enviar para canal {channel_id}: {e}")
 
             del log_history[log_key]
