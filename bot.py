@@ -92,14 +92,14 @@ async def on_message(message):
             
             # Enviar alerta para todos os canais configurados
             for channel_id in ALERT_CHANNELS:
-            try:
+                try:
                     target_channel = client.get_channel(channel_id)
-                if target_channel:
-                    await target_channel.send(alert_message)
+                    if target_channel:
+                        await target_channel.send(alert_message)
                         print(f"✅ Alerta enviado para canal: {channel_id}")
                     else:
                         print(f"❌ Canal não encontrado: {channel_id}")
-            except Exception as e:
+                except Exception as e:
                     print(f"❌ ERRO ao enviar para canal {channel_id}: {e}")
 
             del log_history[log_key]
