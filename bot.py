@@ -40,7 +40,7 @@ async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
     print(f'📊 MODO AVANÇADO: Detectando {LOG_COUNT_THRESHOLD} logs idênticos em {TIME_WINDOW_SECONDS} segundos')
     print(f'🎯 Canal monitorado: {TARGET_CHANNEL_ID}')
-    print(f'📢 Alertas enviados para: Canal {TARGET_CHANNEL_ID}')
+    print(f'📢 Alertas enviados para: Canal 1387430519582494883')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
     print(f'✅ Bot online e monitorando...')
@@ -107,14 +107,15 @@ async def on_message(message):
                 f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
             )
             
-            # Enviar alerta apenas para o canal principal para evitar duplicatas
+            # Enviar alerta para o canal de detecção específico
+            alert_channel_id = 1387430519582494883
             try:
-                target_channel = client.get_channel(TARGET_CHANNEL_ID)
+                target_channel = client.get_channel(alert_channel_id)
                 if target_channel:
                     await target_channel.send(alert_message)
-                    print(f"✅ Alerta enviado para canal: {TARGET_CHANNEL_ID}")
+                    print(f"✅ Alerta enviado para canal: {alert_channel_id}")
                 else:
-                    print(f"❌ Canal não encontrado: {TARGET_CHANNEL_ID}")
+                    print(f"❌ Canal não encontrado: {alert_channel_id}")
             except Exception as e:
                 print(f"❌ ERRO ao enviar alerta: {e}")
 
