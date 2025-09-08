@@ -35,6 +35,12 @@ def extrair_trecho(texto):
         return match.group(1)
     return None
 
+def substituir_rhis5udie_por_vip(texto):
+    """Substitui 'rhis5udie' por 'vip' na mensagem de alerta"""
+    # Substitui rhis5udie por vip (mantendo sufixos como _dlc)
+    texto = re.sub(r'rhis5udie(_dlc)?', r'vip\1', texto)
+    return texto
+
 @client.event
 async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
@@ -101,9 +107,10 @@ async def on_message(message):
             alerted_logs[log_key] = now
             
             # Nova mensagem de alerta
+            log_key_modificado = substituir_rhis5udie_por_vip(log_key)
             alert_message = (
                 f"@everyone ALERTA DE SPAM DETECTADO!\n"
-                f"{log_key}\n"
+                f"{log_key_modificado}\n"
                 f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
             )
             
