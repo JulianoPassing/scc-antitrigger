@@ -12,6 +12,7 @@ TARGET_CHANNEL_ID = 1398496668537716896
 ALERT_CHANNELS = [
     1398496668537716896,  # Canal original
     1387430519582494883,  # Canal adicional
+    1421954201969496158,  # Canal do servidor 1046404063287332936
     # Adicione mais IDs de canais aqui
 ]
 
@@ -46,7 +47,9 @@ async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
     print(f'📊 MODO AVANÇADO: Detectando {LOG_COUNT_THRESHOLD} logs idênticos em {TIME_WINDOW_SECONDS} segundos')
     print(f'🎯 Canal monitorado: {TARGET_CHANNEL_ID}')
-    print(f'📢 Alertas enviados para: Canal 1387430519582494883')
+    print(f'📢 Alertas enviados para: {len(ALERT_CHANNELS)} canais')
+    for i, channel_id in enumerate(ALERT_CHANNELS, 1):
+        print(f'   {i}. Canal {channel_id}')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
     print(f'✅ Bot online e monitorando...')
@@ -114,17 +117,17 @@ async def on_message(message):
                 f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
             )
             
-            # Enviar alerta para o canal de detecção específico
-            alert_channel_id = 1387430519582494883
-            try:
-                target_channel = client.get_channel(alert_channel_id)
-                if target_channel:
-                    await target_channel.send(alert_message)
-                    print(f"✅ Alerta enviado para canal: {alert_channel_id}")
-                else:
-                    print(f"❌ Canal não encontrado: {alert_channel_id}")
-            except Exception as e:
-                print(f"❌ ERRO ao enviar alerta: {e}")
+            # Enviar alerta para todos os canais configurados
+            for alert_channel_id in ALERT_CHANNELS:
+                try:
+                    target_channel = client.get_channel(alert_channel_id)
+                    if target_channel:
+                        await target_channel.send(alert_message)
+                        print(f"✅ Alerta enviado para canal: {alert_channel_id}")
+                    else:
+                        print(f"❌ Canal não encontrado: {alert_channel_id}")
+                except Exception as e:
+                    print(f"❌ ERRO ao enviar alerta para canal {alert_channel_id}: {e}")
 
             # Limpar histórico deste log após enviar alerta
             if log_key in log_history:
