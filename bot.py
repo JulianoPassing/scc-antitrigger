@@ -6,12 +6,11 @@ import re
 
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
-TARGET_CHANNEL_ID = 1398496668537716896
+TARGET_CHANNEL_ID = 1398496668537716896  # Canal do servidor 1313305951004135434
 
 # Lista de canais para enviar alertas (ID do canal)
 ALERT_CHANNELS = [
-    1398496668537716896,  # Canal original
-    1387430519582494883,  # Canal adicional
+    1387430519582494883,  # Canal do servidor 1313305951004135434
     1421954201969496158,  # Canal do servidor 1046404063287332936
     # Adicione mais IDs de canais aqui
 ]
