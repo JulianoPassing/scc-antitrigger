@@ -45,10 +45,10 @@ def substituir_rhis5udie_por_vip(texto):
 async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
     print(f'📊 MODO AVANÇADO: Detectando {LOG_COUNT_THRESHOLD} logs idênticos em {TIME_WINDOW_SECONDS} segundos')
-    print(f'🎯 Canal monitorado: {TARGET_CHANNEL_ID}')
+    print(f'🎯 Canal monitorado: {TARGET_CHANNEL_ID} (Servidor 1313305951004135434)')
     print(f'📢 Alertas enviados para: {len(ALERT_CHANNELS)} canais')
-    for i, channel_id in enumerate(ALERT_CHANNELS, 1):
-        print(f'   {i}. Canal {channel_id}')
+    print(f'   📢 Canal 1387430519582494883 (Servidor 1313305951004135434)')
+    print(f'   📢 Canal 1421954201969496158 (Servidor 1046404063287332936)')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
     print(f'✅ Bot online e monitorando...')
