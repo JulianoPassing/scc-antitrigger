@@ -26,7 +26,7 @@ client = discord.Client(intents=intents)
 log_history = {}
 alerted_logs = {}  # Novo: rastrear logs que já dispararam alerta
 # --- PARÂMETROS ATUALIZADOS ---
-TIME_WINDOW_SECONDS = 60  # Janela de tempo em segundos (alterado para 60)
+TIME_WINDOW_SECONDS = 180  # Janela de tempo em segundos (alterado para 60)
 LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta (alterado para 3)
 
 def extrair_trecho(texto):
