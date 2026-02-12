@@ -24,10 +24,12 @@ client = discord.Client(intents=intents)
 
 # --- MEMÓRIA DO BOT ---
 log_history = {}
-alerted_logs = {}  # Novo: rastrear logs que já dispararam alerta
+alerted_logs = {}  # Rastrear logs que já dispararam alerta de spam
+alerted_salary_dump = {}  # Rastrear logs que já dispararam alerta de dump de salário
 # --- PARÂMETROS ATUALIZADOS ---
 TIME_WINDOW_SECONDS = 180  # Janela de tempo em segundos (alterado para 60)
 LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta (alterado para 3)
+SALARY_DUMP_VALUES = {3000, 5000, 7000, 9000}  # Valores suspeitos de dump de salário
 
 def extrair_trecho(texto):
     match = re.search(r'(\*\*.*?added)', texto)
@@ -41,6 +43,25 @@ def substituir_rhis5udie_por_vip(texto):
     texto = re.sub(r'rhis5udie(_dlc)?', r'vip\1', texto)
     return texto
 
+def verificar_dump_salario(texto, trecho):
+    """
+    Verifica se o log indica possível dump de salário.
+    Condições: valor 3000/5000/7000/9000 + (bank) + reason: unknown (não Salario Comprado)
+    """
+    if "(bank)" not in texto.lower():
+        return False, None
+    if "reason: unknown" not in texto.lower():
+        return False, None
+    if "salario comprado" in texto.lower():
+        return False, None
+    match = re.search(r'\$(\d+)', texto)
+    if not match:
+        return False, None
+    valor = int(match.group(1))
+    if valor not in SALARY_DUMP_VALUES:
+        return False, None
+    return True, valor
+
 @client.event
 async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
@@ -51,6 +72,7 @@ async def on_ready():
     print(f'   📢 Canal 1421954201969496158 (Servidor 1046404063287332936)')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
+    print(f'💰 Alerta Dump Salário: valores {SALARY_DUMP_VALUES} em (bank) com reason: unknown')
     print(f'✅ Bot online e monitorando...')
 
 @client.event
@@ -75,6 +97,32 @@ async def on_message(message):
         if not trecho:
             return  # Não encontrou o padrão desejado
         log_key = trecho
+
+        # --- ALERTA: Possível Dump de Salário ---
+        # Valores 3000/5000/7000/9000 em (bank) com reason: unknown
+        é_dump, valor = verificar_dump_salario(texto_completo, trecho)
+        if é_dump:
+            for key in list(alerted_salary_dump.keys()):
+                if (now - alerted_salary_dump[key]).total_seconds() >= TIME_WINDOW_SECONDS:
+                    del alerted_salary_dump[key]
+            if log_key not in alerted_salary_dump:
+                alerted_salary_dump[log_key] = now
+                trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                alert_dump = (
+                    f"@everyone ⚠️ POSSÍVEL DUMP DE SALÁRIO!\n"
+                    f"{trecho_mod}\n"
+                    f"Valor: ${valor} (bank) - reason: \"unknown\" e não \"Salario Comprado\""
+                )
+                for alert_channel_id in ALERT_CHANNELS:
+                    try:
+                        target_channel = client.get_channel(alert_channel_id)
+                        if target_channel:
+                            await target_channel.send(alert_dump)
+                            print(f"✅ Alerta Dump Salário enviado para canal: {alert_channel_id}")
+                        else:
+                            print(f"❌ Canal não encontrado: {alert_channel_id}")
+                    except Exception as e:
+                        print(f"❌ ERRO ao enviar alerta dump para canal {alert_channel_id}: {e}")
 
         # Limpeza do histórico antigo
         for key in list(log_history.keys()):
