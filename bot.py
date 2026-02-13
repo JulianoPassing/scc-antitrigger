@@ -278,27 +278,32 @@ async def on_message(message):
             # Marcar este log como já alertado
             alerted_logs[log_key] = now
             
-            # Nova mensagem de alerta
-            log_key_modificado = substituir_rhis5udie_por_vip(log_key)
-            alert_message = (
-                f"@everyone ALERTA DE SPAM DETECTADO!\n"
-                f"{log_key_modificado}\n"
-                f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
-            )
+            # Não enviar alerta se o reason for Salario Comprado ou Salario VIP
+            match_reason = re.search(r'reason:\s*([^\n*]+)', texto_completo, re.IGNORECASE)
+            reason = match_reason.group(1).strip().lower() if match_reason else ""
+            pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
             
-            # Enviar alerta para todos os canais configurados
-            for alert_channel_id in ALERT_CHANNELS:
-                try:
-                    target_channel = client.get_channel(alert_channel_id)
-                    if target_channel:
-                        await target_channel.send(alert_message)
-                        print(f"✅ Alerta enviado para canal: {alert_channel_id}")
-                    else:
-                        print(f"❌ Canal não encontrado: {alert_channel_id}")
-                except Exception as e:
-                    print(f"❌ ERRO ao enviar alerta para canal {alert_channel_id}: {e}")
+            if not pular_alerta_salario:
+                log_key_modificado = substituir_rhis5udie_por_vip(log_key)
+                alert_message = (
+                    f"@everyone ALERTA DE SPAM DETECTADO!\n"
+                    f"{log_key_modificado}\n"
+                    f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
+                )
+                for alert_channel_id in ALERT_CHANNELS:
+                    try:
+                        target_channel = client.get_channel(alert_channel_id)
+                        if target_channel:
+                            await target_channel.send(alert_message)
+                            print(f"✅ Alerta enviado para canal: {alert_channel_id}")
+                        else:
+                            print(f"❌ Canal não encontrado: {alert_channel_id}")
+                    except Exception as e:
+                        print(f"❌ ERRO ao enviar alerta para canal {alert_channel_id}: {e}")
+            else:
+                print(f"⏭️ Alerta de spam ignorado - reason legítimo: {reason}")
 
-            # Limpar histórico deste log após enviar alerta
+            # Limpar histórico deste log após processar
             if log_key in log_history:
                 del log_history[log_key]
 
