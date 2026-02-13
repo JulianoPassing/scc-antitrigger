@@ -48,24 +48,30 @@ def substituir_rhis5udie_por_vip(texto):
     texto = re.sub(r'rhis5udie(_dlc)?', r'vip\1', texto)
     return texto
 
+REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip")
+
 def verificar_dump_salario(texto, trecho):
     """
     Verifica se o log indica possível dump de salário.
-    Condições: valor 3000/5000/7000/9000 + (bank) + reason: unknown (não Salario Comprado)
+    Condições: valor 3000/5000/7000/9000 + (bank) + reason diferente de Salario Comprado/Salario VIP
+    Retorna: (é_dump, valor, reason_extraido)
     """
     if "(bank)" not in texto.lower():
-        return False, None
-    if "reason: unknown" not in texto.lower():
-        return False, None
-    if "salario comprado" in texto.lower():
-        return False, None
+        return False, None, None
+    # Extrair o reason e verificar se é legítimo
+    match_reason = re.search(r'reason:\s*([^\n*]+)', texto, re.IGNORECASE)
+    reason_extraido = match_reason.group(1).strip() if match_reason else "não encontrado"
+    if match_reason:
+        reason_lower = reason_extraido.lower()
+        if reason_lower in REASONS_SALARIO_LEGITIMOS:
+            return False, None, None
     match = re.search(r'\$(\d+)', texto)
     if not match:
-        return False, None
+        return False, None, None
     valor = int(match.group(1))
     if valor not in SALARY_DUMP_VALUES:
-        return False, None
-    return True, valor
+        return False, None, None
+    return True, valor, reason_extraido
 
 @client.event
 async def on_ready():
@@ -77,7 +83,7 @@ async def on_ready():
     print(f'   📢 Canal 1421954201969496158 (Servidor 1046404063287332936)')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
-    print(f'💰 Alerta Dump Salário: canal 1471831384837460136 (Servidor 1046404063287332936)')
+    print(f'💰 Alerta Dump Salário: valores {SALARY_DUMP_VALUES} em (bank) - reason diferente de Salario Comprado/Salario VIP')
     print(f'✅ Bot online e monitorando...')
 
 @client.event
@@ -105,7 +111,7 @@ async def on_message(message):
 
         # --- ALERTA: Possível Dump de Salário ---
         # Valores 3000/5000/7000/9000 em (bank) com reason: unknown
-        é_dump, valor = verificar_dump_salario(texto_completo, trecho)
+        é_dump, valor, reason = verificar_dump_salario(texto_completo, trecho)
         if é_dump:
             for key in list(alerted_salary_dump.keys()):
                 if (now - alerted_salary_dump[key]).total_seconds() >= TIME_WINDOW_SECONDS:
@@ -116,7 +122,7 @@ async def on_message(message):
                 alert_dump = (
                     f"@everyone ⚠️ POSSÍVEL DUMP DE SALÁRIO!\n"
                     f"{trecho_mod}\n"
-                    f"Valor: ${valor} (bank) - reason: \"unknown\" e não \"Salario Comprado\""
+                    f"Valor: ${valor} (bank) - reason: \"{reason}\" (esperado: Salario Comprado ou Salario VIP)"
                 )
                 for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
                     try:
