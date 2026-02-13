@@ -33,7 +33,6 @@ client = discord.Client(intents=intents)
 log_history = {}
 alerted_logs = {}  # Rastrear logs que já dispararam alerta de spam
 alerted_salary_dump = {}  # Rastrear logs que já dispararam alerta de dump de salário
-alerted_salary_interval = {}  # Rastrear cidadãos que já dispararam alerta de intervalo 30 min
 # --- PARÂMETROS ATUALIZADOS ---
 TIME_WINDOW_SECONDS = 180  # Janela de tempo em segundos (alterado para 60)
 LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta (alterado para 3)
@@ -80,14 +79,14 @@ def salvar_salary_logs(data):
     except IOError as e:
         print(f"❌ Erro ao salvar salary_logs.json: {e}")
 
-def verificar_intervalo_30min(entries):
+def encontrar_cadeia_30min(entries):
     """
-    Verifica se há 2+ entradas com intervalo ~30 min entre elas.
+    Encontra a maior cadeia de entradas com intervalo ~30 min entre consecutivas.
     entries: lista de {"timestamp": "ISO", "value": N, "reason": "..."}
-    Retorna: (encontrou, [entry1, entry2]) - as 2 entradas que formam o intervalo
+    Retorna: lista de entradas da cadeia (2, 3, 4 ou mais) ou [] se não houver
     """
     if len(entries) < 2:
-        return False, None
+        return []
     now = datetime.datetime.now(datetime.timezone.utc)
     cutoff = now - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
     valid = []
@@ -99,11 +98,20 @@ def verificar_intervalo_30min(entries):
         except (ValueError, KeyError):
             continue
     valid.sort(key=lambda x: x[0])
-    for i in range(len(valid) - 1):
-        delta = (valid[i + 1][0] - valid[i][0]).total_seconds()
-        if SALARY_INTERVAL_MIN <= delta <= SALARY_INTERVAL_MAX:
-            return True, [valid[i][1], valid[i + 1][1]]
-    return False, None
+    best_chain = []
+    for i in range(len(valid)):
+        chain = [valid[i][1]]
+        last_ts = valid[i][0]
+        for j in range(i + 1, len(valid)):
+            delta = (valid[j][0] - last_ts).total_seconds()
+            if SALARY_INTERVAL_MIN <= delta <= SALARY_INTERVAL_MAX:
+                chain.append(valid[j][1])
+                last_ts = valid[j][0]
+            else:
+                break
+        if len(chain) >= 2 and len(chain) > len(best_chain):
+            best_chain = chain
+    return best_chain
 
 def verificar_dump_salario(texto, trecho):
     """
@@ -187,41 +195,31 @@ async def on_message(message):
                     if datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")) > cutoff
                 ]
                 salvar_salary_logs(logs)
-                # Verificar padrão de 30 em 30 min
-                encontrou, par_logs = verificar_intervalo_30min(logs[citizenid])
-                if encontrou and par_logs:
-                    for key in list(alerted_salary_interval.keys()):
-                        if (now - alerted_salary_interval[key]).total_seconds() >= TIME_WINDOW_SECONDS:
-                            del alerted_salary_interval[key]
-                    if citizenid not in alerted_salary_interval:
-                        alerted_salary_interval[citizenid] = now
-                        trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                        # Formatar as 2 logs com horário
-                        def fmt_log(e):
-                            ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
-                            horario = ts.strftime("%d-%m-%Y %H:%M:%S")
-                            return f"  • ${e['value']} (bank) - reason: {e['reason']} | {horario}"
-                        logs_texto = "\n".join(fmt_log(e) for e in par_logs)
-                        alert_interval = (
-                            f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
-                            f"{trecho_mod}\n"
-                            f"CitizenID: {citizenid} - Valores de salário caindo a cada ~30 min sem reason correto\n\n"
-                            f"**Logs detectados no intervalo:**\n{logs_texto}"
-                        )
-                        for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
-                            try:
-                                target_channel = client.get_channel(alert_channel_id)
-                                if target_channel:
-                                    await target_channel.send(alert_interval)
-                                    print(f"✅ Alerta Intervalo 30min enviado para canal: {alert_channel_id}")
-                                else:
-                                    print(f"❌ Canal não encontrado: {alert_channel_id}")
-                            except Exception as e:
-                                print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
-                        # Limpar histórico deste cidadão após alertar
-                        if citizenid in logs:
-                            del logs[citizenid]
-                            salvar_salary_logs(logs)
+                # Verificar padrão de 30 em 30 min (cadeia de 2, 3, 4 ou mais)
+                cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
+                if cadeia_logs:
+                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                    def fmt_log(e):
+                        ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
+                        horario = ts.strftime("%d-%m-%Y %H:%M:%S")
+                        return f"  • ${e['value']} (bank) - reason: {e['reason']} | {horario}"
+                    logs_texto = "\n".join(fmt_log(e) for e in cadeia_logs)
+                    alert_interval = (
+                        f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
+                        f"{trecho_mod}\n"
+                        f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min sem reason correto\n\n"
+                        f"**Logs detectados no intervalo:**\n{logs_texto}"
+                    )
+                    for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
+                        try:
+                            target_channel = client.get_channel(alert_channel_id)
+                            if target_channel:
+                                await target_channel.send(alert_interval)
+                                print(f"✅ Alerta Intervalo 30min ({len(cadeia_logs)} logs) enviado para canal: {alert_channel_id}")
+                            else:
+                                print(f"❌ Canal não encontrado: {alert_channel_id}")
+                        except Exception as e:
+                            print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
 
             # Alerta de dump único (reason incorreto)
             for key in list(alerted_salary_dump.keys()):
