@@ -8,11 +8,16 @@ load_dotenv()
 TOKEN = os.getenv('TOKEN')
 TARGET_CHANNEL_ID = 1398496668537716896  # Canal do servidor 1313305951004135434
 
-# Lista de canais para enviar alertas (ID do canal)
+# Lista de canais para enviar alertas de spam (ID do canal)
 ALERT_CHANNELS = [
     1387430519582494883,  # Canal do servidor 1313305951004135434
     1421954201969496158,  # Canal do servidor 1046404063287332936
     # Adicione mais IDs de canais aqui
+]
+
+# Canal para alertas de dump de salário (Servidor 1046404063287332936)
+SALARY_DUMP_ALERT_CHANNELS = [
+    1471831384837460136,  # Canal do servidor 1046404063287332936
 ]
 
 intents = discord.Intents.default()
@@ -72,7 +77,7 @@ async def on_ready():
     print(f'   📢 Canal 1421954201969496158 (Servidor 1046404063287332936)')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
-    print(f'💰 Alerta Dump Salário: valores {SALARY_DUMP_VALUES} em (bank) com reason: unknown')
+    print(f'💰 Alerta Dump Salário: canal 1471831384837460136 (Servidor 1046404063287332936)')
     print(f'✅ Bot online e monitorando...')
 
 @client.event
@@ -113,7 +118,7 @@ async def on_message(message):
                     f"{trecho_mod}\n"
                     f"Valor: ${valor} (bank) - reason: \"unknown\" e não \"Salario Comprado\""
                 )
-                for alert_channel_id in ALERT_CHANNELS:
+                for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
                     try:
                         target_channel = client.get_channel(alert_channel_id)
                         if target_channel:
