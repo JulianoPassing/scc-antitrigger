@@ -32,6 +32,7 @@ client = discord.Client(intents=intents)
 # --- MEMÓRIA DO BOT ---
 log_history = {}
 alerted_logs = {}  # Rastrear logs que já dispararam alerta de spam
+alerted_salary_chains = {}  # citizenid -> (tuple de timestamps) da cadeia já alertada
 # --- PARÂMETROS ATUALIZADOS ---
 TIME_WINDOW_SECONDS = 180  # Janela de tempo em segundos (alterado para 60)
 LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta (alterado para 3)
@@ -196,28 +197,35 @@ async def on_message(message):
                 # Verificar padrão de 30 em 30 min (cadeia de 2, 3, 4 ou mais)
                 cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
                 if cadeia_logs:
-                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                    def fmt_log(e):
-                        ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
-                        horario = ts.strftime("%d-%m-%Y %H:%M:%S")
-                        return f"  • ${e['value']} (bank) - reason: {e['reason']} | {horario}"
-                    logs_texto = "\n".join(fmt_log(e) for e in cadeia_logs)
-                    alert_interval = (
-                        f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
-                        f"{trecho_mod}\n"
-                        f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min sem reason correto\n\n"
-                        f"**Logs detectados no intervalo:**\n{logs_texto}"
-                    )
-                    for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
-                        try:
-                            target_channel = client.get_channel(alert_channel_id)
-                            if target_channel:
-                                await target_channel.send(alert_interval)
-                                print(f"✅ Alerta Intervalo 30min ({len(cadeia_logs)} logs) enviado para canal: {alert_channel_id}")
-                            else:
-                                print(f"❌ Canal não encontrado: {alert_channel_id}")
-                        except Exception as e:
-                            print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
+                    # Evitar alerta duplicado: só alertar se a cadeia for nova (mais logs que a última alertada)
+                    chain_key = tuple(e["timestamp"] for e in cadeia_logs)
+                    ultima_cadeia = alerted_salary_chains.get(citizenid)
+                    if ultima_cadeia and chain_key == ultima_cadeia:
+                        pass  # Mesma cadeia já alertada, não enviar de novo
+                    else:
+                        alerted_salary_chains[citizenid] = chain_key
+                        trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                        def fmt_log(e):
+                            ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
+                            horario = ts.strftime("%d-%m-%Y %H:%M:%S")
+                            return f"  • ${e['value']} (bank) - reason: {e['reason']} | {horario}"
+                        logs_texto = "\n".join(fmt_log(e) for e in cadeia_logs)
+                        alert_interval = (
+                            f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
+                            f"{trecho_mod}\n"
+                            f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min sem reason correto\n\n"
+                            f"**Logs detectados no intervalo:**\n{logs_texto}"
+                        )
+                        for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
+                            try:
+                                target_channel = client.get_channel(alert_channel_id)
+                                if target_channel:
+                                    await target_channel.send(alert_interval)
+                                    print(f"✅ Alerta Intervalo 30min ({len(cadeia_logs)} logs) enviado para canal: {alert_channel_id}")
+                                else:
+                                    print(f"❌ Canal não encontrado: {alert_channel_id}")
+                            except Exception as e:
+                                print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
 
         # Limpeza do histórico antigo
         for key in list(log_history.keys()):
