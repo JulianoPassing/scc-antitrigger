@@ -32,7 +32,6 @@ client = discord.Client(intents=intents)
 # --- MEMÓRIA DO BOT ---
 log_history = {}
 alerted_logs = {}  # Rastrear logs que já dispararam alerta de spam
-alerted_salary_dump = {}  # Rastrear logs que já dispararam alerta de dump de salário
 # --- PARÂMETROS ATUALIZADOS ---
 TIME_WINDOW_SECONDS = 180  # Janela de tempo em segundos (alterado para 60)
 LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta (alterado para 3)
@@ -146,8 +145,7 @@ async def on_ready():
     print(f'   📢 Canal 1421954201969496158 (Servidor 1046404063287332936)')
     print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
     print(f'🛡️ Sistema anti-duplicação ativado')
-    print(f'💰 Alerta Dump Salário: valores {SALARY_DUMP_VALUES} em (bank) - reason diferente de Salario Comprado/Salario VIP')
-    print(f'📅 Detecção intervalo 30 min: salário sem reason a cada ~30 min (armazenado em {SALARY_LOG_FILE.name})')
+    print(f'💰 Alerta Dump Salário: apenas com 2+ logs em ~30 min (valores {SALARY_DUMP_VALUES}, bank, reason incorreto)')
     print(f'✅ Bot online e monitorando...')
 
 @client.event
@@ -220,29 +218,6 @@ async def on_message(message):
                                 print(f"❌ Canal não encontrado: {alert_channel_id}")
                         except Exception as e:
                             print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
-
-            # Alerta de dump único (reason incorreto)
-            for key in list(alerted_salary_dump.keys()):
-                if (now - alerted_salary_dump[key]).total_seconds() >= TIME_WINDOW_SECONDS:
-                    del alerted_salary_dump[key]
-            if log_key not in alerted_salary_dump:
-                alerted_salary_dump[log_key] = now
-                trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                alert_dump = (
-                    f"@everyone ⚠️ POSSÍVEL DUMP DE SALÁRIO!\n"
-                    f"{trecho_mod}\n"
-                    f"Valor: ${valor} (bank) - reason: \"{reason}\" (esperado: Salario Comprado ou Salario VIP)"
-                )
-                for alert_channel_id in SALARY_DUMP_ALERT_CHANNELS:
-                    try:
-                        target_channel = client.get_channel(alert_channel_id)
-                        if target_channel:
-                            await target_channel.send(alert_dump)
-                            print(f"✅ Alerta Dump Salário enviado para canal: {alert_channel_id}")
-                        else:
-                            print(f"❌ Canal não encontrado: {alert_channel_id}")
-                    except Exception as e:
-                        print(f"❌ ERRO ao enviar alerta dump para canal {alert_channel_id}: {e}")
 
         # Limpeza do histórico antigo
         for key in list(log_history.keys()):
