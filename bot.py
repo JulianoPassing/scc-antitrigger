@@ -463,18 +463,12 @@ async def on_message(message):
 
         if not pular_alerta_salario:
             log_key_modificado = substituir_rhis5udie_por_vip(log_key)
-            spam_data = carregar_spam_logs()
             all_logs = spam_data.get(key_hash, {}).get("logs", [])
-            cutoff_spam = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
-            all_logs = [e for e in all_logs if parse_timestamp(e["timestamp"]) > cutoff_spam]
-            all_logs.sort(key=lambda e: e["timestamp"])
-            spam_data[key_hash] = {"trecho": log_key, "logs": all_logs}
-            salvar_spam_logs(spam_data)
+            all_logs.sort(key=lambda e: e.get("timestamp", ""))
             def fmt_log_completo(i, e):
                 content = e.get("content", "")
                 if content:
-                    content_limpo = content.strip()
-                    return f"**Log {i + 1}:**\n{content_limpo}"
+                    return f"**Log {i + 1}:**\n{content.strip()}"
                 ts = e.get("display") or (parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S") if e.get("timestamp") else "?")
                 return f"**Log {i + 1}:** {ts}"
             logs_texto = "\n\n".join(
@@ -483,9 +477,8 @@ async def on_message(message):
             )
             alert_message = (
                 f"@everyone ALERTA DE SPAM DETECTADO!\n"
-                f"{log_key_modificado}\n"
                 f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
-                f"**Logs acumulados ({len(all_logs)} total, janela {SPAM_LOG_RETENTION // 3600}h):**\n\n{logs_texto}"
+                f"**Logs detectados ({len(all_logs)} total):**\n\n{logs_texto}"
             )
             for cid in ALERT_CHANNELS:
                 await enviar_alerta(cid, alert_message, "Alerta Spam")
