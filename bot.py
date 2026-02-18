@@ -299,9 +299,18 @@ async def on_message(message):
     if message.embeds:
         for embed in message.embeds:
             if embed.title:
-                texto_completo += embed.title
+                texto_completo += embed.title + "\n"
             if embed.description:
                 texto_completo += embed.description
+            if embed.footer and embed.footer.text:
+                texto_completo += "\n" + embed.footer.text
+            for field in getattr(embed, "fields", []) or []:
+                if field.name:
+                    texto_completo += "\n" + field.name
+                if field.value:
+                    texto_completo += "\n" + field.value
+    if message.content:
+        texto_completo = (texto_completo + "\n" + message.content).strip() if texto_completo else message.content
 
     texto_lower = texto_completo.lower()
 
@@ -322,11 +331,14 @@ async def on_message(message):
             logs = carregar_salary_logs()
             if citizenid not in logs:
                 logs[citizenid] = []
+            ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
+            ts_salary = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
             logs[citizenid].append({
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "timestamp": ts_salary,
                 "value": valor,
                 "reason": reason,
                 "type": tipo,
+                "content": texto_completo,
             })
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
             logs[citizenid] = [e for e in logs[citizenid] if parse_timestamp(e["timestamp"]) > cutoff]
@@ -340,15 +352,19 @@ async def on_message(message):
                 if not (ultima_chain == chain_key):
                     alerted_salary_chains[citizenid] = {"chain": chain_key, "timestamp": now}
                     trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                    logs_texto = "\n".join(
-                        f"  {i + 1}. ${e['value']} ({e.get('type', 'bank')}) - reason: {e['reason']} | {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
-                        for i, e in enumerate(cadeia_logs)
+                    def fmt_salary_log(i, e):
+                        content = e.get("content", "")
+                        if content:
+                            return f"**Log {i + 1}:**\n{content.strip()}"
+                        return f"  {i + 1}. ${e['value']} ({e.get('type', 'bank')}) - reason: {e['reason']} | {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
+                    logs_texto = "\n\n".join(
+                        fmt_salary_log(i, e) for i, e in enumerate(cadeia_logs)
                     )
                     alert_interval = (
                         f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
                         f"{trecho_mod}\n"
                         f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min sem reason correto\n\n"
-                        f"**Logs detectados no intervalo:**\n{logs_texto}"
+                        f"**Logs detectados no intervalo:**\n\n{logs_texto}"
                     )
                     for cid in SALARY_DUMP_ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_interval, "Alerta Dump 30min")
@@ -361,11 +377,14 @@ async def on_message(message):
             logs = carregar_salary_legit_logs()
             if citizenid not in logs:
                 logs[citizenid] = []
+            ts_display_legit, ts_iso_legit = extrair_timestamp_da_log(texto_completo)
+            ts_salary_legit = ts_iso_legit if ts_iso_legit else datetime.datetime.now(datetime.timezone.utc).isoformat()
             logs[citizenid].append({
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "timestamp": ts_salary_legit,
                 "value": valor_legit,
                 "reason": reason_legit,
                 "type": tipo_legit,
+                "content": texto_completo,
             })
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
             logs[citizenid] = [e for e in logs[citizenid] if parse_timestamp(e["timestamp"]) > cutoff]
@@ -379,15 +398,19 @@ async def on_message(message):
                 if not (ultima_chain == chain_key):
                     alerted_salary_legit_chains[citizenid] = {"chain": chain_key, "timestamp": now}
                     trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                    logs_texto = "\n".join(
-                        f"  {i + 1}. ${e['value']} ({e.get('type', 'bank')}) - reason: {e['reason']} | {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
-                        for i, e in enumerate(cadeia_logs)
+                    def fmt_legit_log(i, e):
+                        content = e.get("content", "")
+                        if content:
+                            return f"**Log {i + 1}:**\n{content.strip()}"
+                        return f"  {i + 1}. ${e['value']} ({e.get('type', 'bank')}) - reason: {e['reason']} | {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
+                    logs_texto = "\n\n".join(
+                        fmt_legit_log(i, e) for i, e in enumerate(cadeia_logs)
                     )
                     alert_legit = (
                         f"@everyone ✅ SALÁRIO LEGÍTIMO EM INTERVALOS DE ~30 MIN\n"
                         f"{trecho_mod}\n"
                         f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min (reason correto)\n\n"
-                        f"**Logs detectados:**\n{logs_texto}"
+                        f"**Logs detectados:**\n\n{logs_texto}"
                     )
                     for cid in SALARY_LEGIT_ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_legit, "Alerta Salário Legítimo")
@@ -420,6 +443,7 @@ async def on_message(message):
     spam_data[key_hash]["logs"].append({
         "timestamp": ts_armazenar,
         "display": ts_display,
+        "content": texto_completo,
     })
     spam_data[key_hash]["trecho"] = log_key
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
@@ -446,22 +470,22 @@ async def on_message(message):
             all_logs.sort(key=lambda e: e["timestamp"])
             spam_data[key_hash] = {"trecho": log_key, "logs": all_logs}
             salvar_spam_logs(spam_data)
-            def fmt_ts(e):
-                if isinstance(e.get("display"), str):
-                    return e["display"]
-                try:
-                    return parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S")
-                except (ValueError, KeyError):
-                    return str(e.get("timestamp", "?"))
-            logs_texto = "\n".join(
-                f"  {i + 1}. {fmt_ts(e)}"
+            def fmt_log_completo(i, e):
+                content = e.get("content", "")
+                if content:
+                    content_limpo = content.strip()
+                    return f"**Log {i + 1}:**\n{content_limpo}"
+                ts = e.get("display") or (parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S") if e.get("timestamp") else "?")
+                return f"**Log {i + 1}:** {ts}"
+            logs_texto = "\n\n".join(
+                fmt_log_completo(i, e)
                 for i, e in enumerate(all_logs)
             )
             alert_message = (
                 f"@everyone ALERTA DE SPAM DETECTADO!\n"
                 f"{log_key_modificado}\n"
                 f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
-                f"**Logs acumulados ({len(all_logs)} total, janela {SPAM_LOG_RETENTION // 3600}h):**\n{logs_texto}"
+                f"**Logs acumulados ({len(all_logs)} total, janela {SPAM_LOG_RETENTION // 3600}h):**\n\n{logs_texto}"
             )
             for cid in ALERT_CHANNELS:
                 await enviar_alerta(cid, alert_message, "Alerta Spam")
