@@ -400,7 +400,7 @@ async def on_message(message):
     salvar_spam_logs(spam_data)
 
     log_count = len(log_history[log_key])
-    logger.debug("AddMoney detectado. Chave: '%s...'. Contagem: %s/%s", log_key[:30], log_count, LOG_COUNT_THRESHOLD)
+    logger.info("AddMoney detectado. Chave: '%s...'. Contagem: %s/%s", log_key[:50], log_count, LOG_COUNT_THRESHOLD)
 
     if log_count == LOG_COUNT_THRESHOLD:
         logger.info("!!! ALERTA DE SPAM !!! Chave: %s", log_key[:50])
