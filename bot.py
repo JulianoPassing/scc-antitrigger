@@ -1,6 +1,7 @@
 import discord
 import os
 import json
+import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
 import datetime
@@ -22,6 +23,11 @@ SALARY_DUMP_ALERT_CHANNELS = [
     1471831384837460136,  # Canal do servidor 1046404063287332936
 ]
 
+# Canal para alertas de salário legítimo (reason Salario Comprado/VIP) - Servidor 1046404063287332936
+SALARY_LEGIT_ALERT_CHANNELS = [
+    1473755075670310942,  # Canal do servidor 1046404063287332936
+]
+
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
@@ -32,12 +38,16 @@ client = discord.Client(intents=intents)
 # --- MEMÓRIA DO BOT ---
 log_history = {}
 alerted_logs = {}  # Rastrear logs que já dispararam alerta de spam
-alerted_salary_chains = {}  # citizenid -> (tuple de timestamps) da cadeia já alertada
+alerted_salary_chains = {}  # citizenid -> (tuple de timestamps) da cadeia já alertada (dump)
+alerted_salary_legit_chains = {}  # citizenid -> (tuple de timestamps) da cadeia já alertada (legítimo)
 # --- PARÂMETROS ATUALIZADOS ---
-TIME_WINDOW_SECONDS = 180  # Janela de tempo em segundos (alterado para 60)
-LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta (alterado para 3)
+TIME_WINDOW_SECONDS = 60  # Janela de tempo para spam: 3 logs a cada 60 segundos
+LOG_COUNT_THRESHOLD = 3   # Número de logs para disparar o alerta de spam
 SALARY_DUMP_VALUES = {3000, 5000, 7000, 9000}  # Valores suspeitos de dump de salário
 SALARY_LOG_FILE = Path(__file__).parent / "salary_logs.json"
+SALARY_LEGIT_LOG_FILE = Path(__file__).parent / "salary_legit_logs.json"
+SPAM_LOG_FILE = Path(__file__).parent / "spam_logs.json"
+SPAM_LOG_RETENTION = 2 * 60 * 60  # Manter logs de spam por 2 horas
 SALARY_INTERVAL_MIN = 25 * 60  # 25 min em segundos
 SALARY_INTERVAL_MAX = 35 * 60  # 35 min em segundos (média 30 min)
 SALARY_LOG_RETENTION = 2 * 60 * 60  # Manter logs por 2 horas
@@ -78,6 +88,46 @@ def salvar_salary_logs(data):
             json.dump(data, f, indent=2, ensure_ascii=False)
     except IOError as e:
         print(f"❌ Erro ao salvar salary_logs.json: {e}")
+
+def carregar_salary_legit_logs():
+    """Carrega logs de salário legítimo do JSON"""
+    try:
+        if SALARY_LEGIT_LOG_FILE.exists():
+            with open(SALARY_LEGIT_LOG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return {}
+
+def salvar_salary_legit_logs(data):
+    """Salva logs de salário legítimo no JSON"""
+    try:
+        with open(SALARY_LEGIT_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except IOError as e:
+        print(f"❌ Erro ao salvar salary_legit_logs.json: {e}")
+
+def spam_log_key_hash(log_key):
+    """Gera hash para usar como chave no JSON de spam"""
+    return hashlib.md5(log_key.encode("utf-8")).hexdigest()[:24]
+
+def carregar_spam_logs():
+    """Carrega logs de spam do JSON"""
+    try:
+        if SPAM_LOG_FILE.exists():
+            with open(SPAM_LOG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return {}
+
+def salvar_spam_logs(data):
+    """Salva logs de spam no JSON"""
+    try:
+        with open(SPAM_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except IOError as e:
+        print(f"❌ Erro ao salvar spam_logs.json: {e}")
 
 def encontrar_cadeia_30min(entries):
     """
@@ -136,6 +186,29 @@ def verificar_dump_salario(texto, trecho):
         return False, None, None
     return True, valor, reason_extraido
 
+def verificar_salario_legitimo(texto, trecho):
+    """
+    Verifica se o log é salário legítimo (Salario Comprado ou Salario VIP).
+    Condições: valor 3000/5000/7000/9000 + (bank) + reason Salario Comprado ou Salario VIP
+    Retorna: (é_legit, valor, reason_extraido)
+    """
+    if "(bank)" not in texto.lower():
+        return False, None, None
+    match_reason = re.search(r'reason:\s*([^\n*]+)', texto, re.IGNORECASE)
+    reason_extraido = match_reason.group(1).strip() if match_reason else ""
+    if not match_reason:
+        return False, None, None
+    reason_lower = reason_extraido.lower()
+    if reason_lower not in REASONS_SALARIO_LEGITIMOS:
+        return False, None, None
+    match = re.search(r'\$(\d+)', texto)
+    if not match:
+        return False, None, None
+    valor = int(match.group(1))
+    if valor not in SALARY_DUMP_VALUES:
+        return False, None, None
+    return True, valor, reason_extraido
+
 @client.event
 async def on_ready():
     print(f'🤖 Bot Anti Trigger SCC conectado como {client.user}')
@@ -144,9 +217,11 @@ async def on_ready():
     print(f'📢 Alertas enviados para: {len(ALERT_CHANNELS)} canais')
     print(f'   📢 Canal 1387430519582494883 (Servidor 1313305951004135434)')
     print(f'   📢 Canal 1421954201969496158 (Servidor 1046404063287332936)')
-    print(f'⏰ Janela de tempo: {TIME_WINDOW_SECONDS}s | Limite: {LOG_COUNT_THRESHOLD} logs')
+    print(f'⏰ Spam: {LOG_COUNT_THRESHOLD} logs em {TIME_WINDOW_SECONDS}s')
     print(f'🛡️ Sistema anti-duplicação ativado')
-    print(f'💰 Alerta Dump Salário: apenas com 2+ logs em ~30 min (valores {SALARY_DUMP_VALUES}, bank, reason incorreto)')
+    print(f'📁 Spam: logs acumulados em {SPAM_LOG_FILE.name}')
+    print(f'💰 Alerta Dump Salário: canal 1471831384837460136 (2+ logs, reason incorreto)')
+    print(f'✅ Alerta Salário Legítimo: canal 1473755075670310942 (2+ logs, Salario Comprado/VIP)')
     print(f'✅ Bot online e monitorando...')
 
 @client.event
@@ -205,11 +280,11 @@ async def on_message(message):
                     else:
                         alerted_salary_chains[citizenid] = chain_key
                         trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                        def fmt_log(e):
+                        def fmt_log(i, e):
                             ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
                             horario = ts.strftime("%d-%m-%Y %H:%M:%S")
-                            return f"  • ${e['value']} (bank) - reason: {e['reason']} | {horario}"
-                        logs_texto = "\n".join(fmt_log(e) for e in cadeia_logs)
+                            return f"  {i}. ${e['value']} (bank) - reason: {e['reason']} | {horario}"
+                        logs_texto = "\n".join(fmt_log(i + 1, e) for i, e in enumerate(cadeia_logs))
                         alert_interval = (
                             f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
                             f"{trecho_mod}\n"
@@ -226,6 +301,56 @@ async def on_message(message):
                                     print(f"❌ Canal não encontrado: {alert_channel_id}")
                             except Exception as e:
                                 print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
+
+        # --- ALERTA: Salário Legítimo (Salario Comprado / Salario VIP) ---
+        é_legit, valor_legit, reason_legit = verificar_salario_legitimo(texto_completo, trecho)
+        if é_legit:
+            citizenid = extrair_citizenid(texto_completo)
+            if citizenid:
+                logs = carregar_salary_legit_logs()
+                if citizenid not in logs:
+                    logs[citizenid] = []
+                logs[citizenid].append({
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "value": valor_legit,
+                    "reason": reason_legit,
+                })
+                cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
+                logs[citizenid] = [
+                    e for e in logs[citizenid]
+                    if datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")) > cutoff
+                ]
+                salvar_salary_legit_logs(logs)
+                cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
+                if cadeia_logs:
+                    chain_key = tuple(e["timestamp"] for e in cadeia_logs)
+                    ultima_cadeia = alerted_salary_legit_chains.get(citizenid)
+                    if ultima_cadeia and chain_key == ultima_cadeia:
+                        pass
+                    else:
+                        alerted_salary_legit_chains[citizenid] = chain_key
+                        trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                        def fmt_log_legit(i, e):
+                            ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
+                            horario = ts.strftime("%d-%m-%Y %H:%M:%S")
+                            return f"  {i}. ${e['value']} (bank) - reason: {e['reason']} | {horario}"
+                        logs_texto = "\n".join(fmt_log_legit(i + 1, e) for i, e in enumerate(cadeia_logs))
+                        alert_legit = (
+                            f"@everyone ✅ SALÁRIO LEGÍTIMO EM INTERVALOS DE ~30 MIN\n"
+                            f"{trecho_mod}\n"
+                            f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min (reason correto)\n\n"
+                            f"**Logs detectados:**\n{logs_texto}"
+                        )
+                        for alert_channel_id in SALARY_LEGIT_ALERT_CHANNELS:
+                            try:
+                                target_channel = client.get_channel(alert_channel_id)
+                                if target_channel:
+                                    await target_channel.send(alert_legit)
+                                    print(f"✅ Alerta Salário Legítimo ({len(cadeia_logs)} logs) enviado para canal: {alert_channel_id}")
+                                else:
+                                    print(f"❌ Canal não encontrado: {alert_channel_id}")
+                            except Exception as e:
+                                print(f"❌ ERRO ao enviar alerta salário legítimo para canal {alert_channel_id}: {e}")
 
         # Limpeza do histórico antigo
         for key in list(log_history.keys()):
@@ -249,6 +374,23 @@ async def on_message(message):
             log_history[log_key] = []
         log_history[log_key].append(now)
 
+        # Acumular no JSON para histórico de spam
+        spam_data = carregar_spam_logs()
+        key_hash = spam_log_key_hash(log_key)
+        if key_hash not in spam_data:
+            spam_data[key_hash] = {"trecho": log_key, "logs": []}
+        spam_data[key_hash]["logs"].append({
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        })
+        spam_data[key_hash]["trecho"] = log_key
+        # Limpar entradas antigas ao acumular
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
+        spam_data[key_hash]["logs"] = [
+            e for e in spam_data[key_hash]["logs"]
+            if datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")) > cutoff
+        ]
+        salvar_spam_logs(spam_data)
+
         log_count = len(log_history[log_key])
 
         print(f"Log de AddMoney detectado. Chave: '{log_key[:30]}...'. Contagem atual: {log_count}/{LOG_COUNT_THRESHOLD}")
@@ -266,10 +408,33 @@ async def on_message(message):
             
             if not pular_alerta_salario:
                 log_key_modificado = substituir_rhis5udie_por_vip(log_key)
+                # Carregar logs acumulados do JSON e mesclar com atuais
+                spam_data = carregar_spam_logs()
+                key_hash = spam_log_key_hash(log_key)
+                if key_hash in spam_data:
+                    all_logs = spam_data[key_hash]["logs"]
+                else:
+                    all_logs = []
+                # Limpar entradas antigas (mais de 2h)
+                cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
+                all_logs = [
+                    e for e in all_logs
+                    if datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")) > cutoff
+                ]
+                # Ordenar por timestamp
+                all_logs.sort(key=lambda e: e["timestamp"])
+                # Atualizar JSON com logs limpos
+                spam_data[key_hash] = {"trecho": log_key, "logs": all_logs}
+                salvar_spam_logs(spam_data)
+                logs_texto = "\n".join(
+                    f"  {i + 1}. {datetime.datetime.fromisoformat(e['timestamp'].replace('Z', '+00:00')).strftime('%d-%m-%Y %H:%M:%S')}"
+                    for i, e in enumerate(all_logs)
+                )
                 alert_message = (
                     f"@everyone ALERTA DE SPAM DETECTADO!\n"
                     f"{log_key_modificado}\n"
-                    f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
+                    f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
+                    f"**Logs acumulados ({len(all_logs)} total, janela {SPAM_LOG_RETENTION//3600}h):**\n{logs_texto}"
                 )
                 for alert_channel_id in ALERT_CHANNELS:
                     try:
