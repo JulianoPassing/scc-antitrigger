@@ -67,6 +67,7 @@ RE_RHIS5UDIE = re.compile(r"rhis5udie(_dlc)?")
 RE_CITIZENID = re.compile(r"citizenid:\s*([A-Z0-9]+)", re.IGNORECASE)
 RE_REASON = re.compile(r"reason:\s*([^\n*]+)", re.IGNORECASE)
 RE_VALOR = re.compile(r"\$(\d+)")
+RE_TIMESTAMP_LOG = re.compile(r"(\d{1,2}:\d{2}:\d{2}\s+\d{2}-\d{2}-\d{4})")
 
 REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip")
 
@@ -104,6 +105,27 @@ def extrair_tipo_dinheiro(texto):
     if "(cash)" in texto_lower:
         return "cash"
     return None
+
+
+def extrair_timestamp_da_log(texto):
+    """
+    Extrai o horário da log (ex: 13:27:38 02-18-2026) do texto da mensagem.
+    Retorna (display_str, iso_str) para exibição e ordenação, ou (None, None) se não encontrar.
+    Formato da log: HH:MM:SS MM-DD-YYYY ou HH:MM:SS DD-MM-YYYY
+    """
+    match = RE_TIMESTAMP_LOG.search(texto)
+    if not match:
+        return None, None
+    ts_str = match.group(1).strip()
+    for fmt in ("%H:%M:%S %m-%d-%Y", "%H:%M:%S %d-%m-%Y"):
+        try:
+            dt = datetime.datetime.strptime(ts_str, fmt).replace(tzinfo=datetime.timezone.utc)
+            display = dt.strftime("%d-%m-%Y %H:%M:%S")
+            iso_str = dt.isoformat()
+            return display, iso_str
+        except ValueError:
+            continue
+    return ts_str, ts_str
 
 
 def carregar_salary_logs():
@@ -393,7 +415,12 @@ async def on_message(message):
     key_hash = spam_log_key_hash(log_key)
     if key_hash not in spam_data:
         spam_data[key_hash] = {"trecho": log_key, "logs": []}
-    spam_data[key_hash]["logs"].append({"timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
+    ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
+    spam_data[key_hash]["logs"].append({
+        "timestamp": ts_armazenar,
+        "display": ts_display,
+    })
     spam_data[key_hash]["trecho"] = log_key
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
     spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if parse_timestamp(e["timestamp"]) > cutoff]
@@ -419,8 +446,15 @@ async def on_message(message):
             all_logs.sort(key=lambda e: e["timestamp"])
             spam_data[key_hash] = {"trecho": log_key, "logs": all_logs}
             salvar_spam_logs(spam_data)
+            def fmt_ts(e):
+                if isinstance(e.get("display"), str):
+                    return e["display"]
+                try:
+                    return parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S")
+                except (ValueError, KeyError):
+                    return str(e.get("timestamp", "?"))
             logs_texto = "\n".join(
-                f"  {i + 1}. {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
+                f"  {i + 1}. {fmt_ts(e)}"
                 for i, e in enumerate(all_logs)
             )
             alert_message = (
