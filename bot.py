@@ -71,6 +71,15 @@ def extrair_citizenid(texto):
     match = re.search(r'citizenid:\s*([A-Z0-9]+)', texto, re.IGNORECASE)
     return match.group(1) if match else None
 
+def extrair_tipo_dinheiro(texto):
+    """Extrai se o valor foi para (bank) ou (cash)"""
+    texto_lower = texto.lower()
+    if "(bank)" in texto_lower:
+        return "bank"
+    if "(cash)" in texto_lower:
+        return "cash"
+    return None
+
 def carregar_salary_logs():
     """Carrega logs de salário do JSON"""
     try:
@@ -166,48 +175,50 @@ def encontrar_cadeia_30min(entries):
 def verificar_dump_salario(texto, trecho):
     """
     Verifica se o log indica possível dump de salário.
-    Condições: valor 3000/5000/7000/9000 + (bank) + reason diferente de Salario Comprado/Salario VIP
-    Retorna: (é_dump, valor, reason_extraido)
+    Condições: valor 3000/5000/7000/9000 + (bank) ou (cash) + reason diferente de Salario Comprado/Salario VIP
+    Retorna: (é_dump, valor, reason_extraido, tipo)
     """
-    if "(bank)" not in texto.lower():
-        return False, None, None
+    tipo = extrair_tipo_dinheiro(texto)
+    if tipo is None:
+        return False, None, None, None
     # Extrair o reason e verificar se é legítimo
     match_reason = re.search(r'reason:\s*([^\n*]+)', texto, re.IGNORECASE)
     reason_extraido = match_reason.group(1).strip() if match_reason else "não encontrado"
     if match_reason:
         reason_lower = reason_extraido.lower()
         if reason_lower in REASONS_SALARIO_LEGITIMOS:
-            return False, None, None
+            return False, None, None, None
     match = re.search(r'\$(\d+)', texto)
     if not match:
-        return False, None, None
+        return False, None, None, None
     valor = int(match.group(1))
     if valor not in SALARY_DUMP_VALUES:
-        return False, None, None
-    return True, valor, reason_extraido
+        return False, None, None, None
+    return True, valor, reason_extraido, tipo
 
 def verificar_salario_legitimo(texto, trecho):
     """
     Verifica se o log é salário legítimo (Salario Comprado ou Salario VIP).
-    Condições: valor 3000/5000/7000/9000 + (bank) + reason Salario Comprado ou Salario VIP
-    Retorna: (é_legit, valor, reason_extraido)
+    Condições: valor 3000/5000/7000/9000 + (bank) ou (cash) + reason Salario Comprado ou Salario VIP
+    Retorna: (é_legit, valor, reason_extraido, tipo)
     """
-    if "(bank)" not in texto.lower():
-        return False, None, None
+    tipo = extrair_tipo_dinheiro(texto)
+    if tipo is None:
+        return False, None, None, None
     match_reason = re.search(r'reason:\s*([^\n*]+)', texto, re.IGNORECASE)
     reason_extraido = match_reason.group(1).strip() if match_reason else ""
     if not match_reason:
-        return False, None, None
+        return False, None, None, None
     reason_lower = reason_extraido.lower()
     if reason_lower not in REASONS_SALARIO_LEGITIMOS:
-        return False, None, None
+        return False, None, None, None
     match = re.search(r'\$(\d+)', texto)
     if not match:
-        return False, None, None
+        return False, None, None, None
     valor = int(match.group(1))
     if valor not in SALARY_DUMP_VALUES:
-        return False, None, None
-    return True, valor, reason_extraido
+        return False, None, None, None
+    return True, valor, reason_extraido, tipo
 
 @client.event
 async def on_ready():
@@ -220,8 +231,8 @@ async def on_ready():
     print(f'⏰ Spam: {LOG_COUNT_THRESHOLD} logs em {TIME_WINDOW_SECONDS}s')
     print(f'🛡️ Sistema anti-duplicação ativado')
     print(f'📁 Spam: logs acumulados em {SPAM_LOG_FILE.name}')
-    print(f'💰 Alerta Dump Salário: canal 1471831384837460136 (2+ logs, reason incorreto)')
-    print(f'✅ Alerta Salário Legítimo: canal 1473755075670310942 (2+ logs, Salario Comprado/VIP)')
+    print(f'💰 Alerta Dump Salário: canal 1471831384837460136 (2+ logs, bank/cash, reason incorreto)')
+    print(f'✅ Alerta Salário Legítimo: canal 1473755075670310942 (2+ logs, bank/cash, Salario Comprado/VIP)')
     print(f'✅ Bot online e monitorando...')
 
 @client.event
@@ -248,8 +259,8 @@ async def on_message(message):
         log_key = trecho
 
         # --- ALERTA: Possível Dump de Salário ---
-        # Valores 3000/5000/7000/9000 em (bank) com reason incorreto
-        é_dump, valor, reason = verificar_dump_salario(texto_completo, trecho)
+        # Valores 3000/5000/7000/9000 em (bank) ou (cash) com reason incorreto
+        é_dump, valor, reason, tipo = verificar_dump_salario(texto_completo, trecho)
         if é_dump:
             # Registrar no JSON para detecção de intervalo 30 em 30 min
             citizenid = extrair_citizenid(texto_completo)
@@ -261,6 +272,7 @@ async def on_message(message):
                     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "value": valor,
                     "reason": reason,
+                    "type": tipo,
                 })
                 # Limpar entradas antigas (mais de 2h)
                 cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
@@ -283,7 +295,8 @@ async def on_message(message):
                         def fmt_log(i, e):
                             ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
                             horario = ts.strftime("%d-%m-%Y %H:%M:%S")
-                            return f"  {i}. ${e['value']} (bank) - reason: {e['reason']} | {horario}"
+                            tipo_log = e.get("type", "bank")
+                            return f"  {i}. ${e['value']} ({tipo_log}) - reason: {e['reason']} | {horario}"
                         logs_texto = "\n".join(fmt_log(i + 1, e) for i, e in enumerate(cadeia_logs))
                         alert_interval = (
                             f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
@@ -303,7 +316,7 @@ async def on_message(message):
                                 print(f"❌ ERRO ao enviar alerta intervalo para canal {alert_channel_id}: {e}")
 
         # --- ALERTA: Salário Legítimo (Salario Comprado / Salario VIP) ---
-        é_legit, valor_legit, reason_legit = verificar_salario_legitimo(texto_completo, trecho)
+        é_legit, valor_legit, reason_legit, tipo_legit = verificar_salario_legitimo(texto_completo, trecho)
         if é_legit:
             citizenid = extrair_citizenid(texto_completo)
             if citizenid:
@@ -314,6 +327,7 @@ async def on_message(message):
                     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "value": valor_legit,
                     "reason": reason_legit,
+                    "type": tipo_legit,
                 })
                 cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
                 logs[citizenid] = [
@@ -333,7 +347,8 @@ async def on_message(message):
                         def fmt_log_legit(i, e):
                             ts = datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
                             horario = ts.strftime("%d-%m-%Y %H:%M:%S")
-                            return f"  {i}. ${e['value']} (bank) - reason: {e['reason']} | {horario}"
+                            tipo_log = e.get("type", "bank")
+                            return f"  {i}. ${e['value']} ({tipo_log}) - reason: {e['reason']} | {horario}"
                         logs_texto = "\n".join(fmt_log_legit(i + 1, e) for i, e in enumerate(cadeia_logs))
                         alert_legit = (
                             f"@everyone ✅ SALÁRIO LEGÍTIMO EM INTERVALOS DE ~30 MIN\n"
