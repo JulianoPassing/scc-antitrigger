@@ -293,44 +293,57 @@ async def on_ready():
     logger.info("✅ Bot online e monitorando...")
 
 
+def _build_texto_embed(embed):
+    """Monta texto completo a partir de um embed."""
+    parts = []
+    if embed.title:
+        parts.append(embed.title)
+    if embed.description:
+        parts.append(embed.description)
+    if embed.footer and embed.footer.text:
+        parts.append(embed.footer.text)
+    for field in getattr(embed, "fields", []) or []:
+        if field.name:
+            parts.append(field.name)
+        if field.value:
+            parts.append(field.value)
+    return "\n".join(parts)
+
+
+def _extrair_logs_da_mensagem(message):
+    """Extrai lista de textos completos (uma por embed ou message.content)."""
+    logs = []
+    if message.embeds:
+        for embed in message.embeds:
+            txt = _build_texto_embed(embed)
+            if txt and ("addmoney" in txt.lower() and "citizenid" in txt.lower() and "added" in txt.lower()):
+                logs.append(txt)
+    if not logs and message.content and "addmoney" in message.content.lower() and "citizenid" in message.content.lower():
+        logs.append(message.content)
+    return logs if logs else None
+
+
 @client.event
 async def on_message(message):
     if message.author == client.user or message.channel.id != TARGET_CHANNEL_ID:
         return
 
-    texto_completo = ""
-    if message.embeds:
-        for embed in message.embeds:
-            if embed.title:
-                texto_completo += embed.title + "\n"
-            if embed.description:
-                texto_completo += embed.description
-            if embed.footer and embed.footer.text:
-                texto_completo += "\n" + embed.footer.text
-            for field in getattr(embed, "fields", []) or []:
-                if field.name:
-                    texto_completo += "\n" + field.name
-                if field.value:
-                    texto_completo += "\n" + field.value
-    if message.content:
-        texto_completo = (texto_completo + "\n" + message.content).strip() if texto_completo else message.content
-
-    texto_lower = texto_completo.lower()
-
-    if "addmoney" not in texto_lower or "citizenid" not in texto_lower or "id" not in texto_lower or "added" not in texto_lower:
+    logs_texto = _extrair_logs_da_mensagem(message)
+    if not logs_texto:
         return
 
     now = datetime.datetime.now()
-    trecho = extrair_trecho(texto_completo)
-    if not trecho:
-        return
-    citizenid = extrair_citizenid(texto_completo)
-    spam_key = citizenid if citizenid else trecho
 
-    # --- ALERTA: Dump de Salário ---
-    é_dump, valor, reason, tipo = verificar_dump_salario(texto_completo, trecho)
-    if é_dump:
-        if citizenid:
+    for texto_completo in logs_texto:
+        trecho = extrair_trecho(texto_completo)
+        if not trecho:
+            continue
+        citizenid = extrair_citizenid(texto_completo)
+        spam_key = citizenid if citizenid else trecho
+
+        # --- ALERTA: Dump de Salário ---
+        é_dump, valor, reason, tipo = verificar_dump_salario(texto_completo, trecho)
+        if é_dump and citizenid:
             logs = carregar_salary_logs()
             if citizenid not in logs:
                 logs[citizenid] = []
@@ -372,11 +385,9 @@ async def on_message(message):
                     for cid in SALARY_DUMP_ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_interval, "Alerta Dump 30min")
 
-    # --- ALERTA: Salário Legítimo ---
-    é_legit, valor_legit, reason_legit, tipo_legit = verificar_salario_legitimo(texto_completo, trecho)
-    if é_legit:
-        citizenid = extrair_citizenid(texto_completo)
-        if citizenid:
+        # --- ALERTA: Salário Legítimo ---
+        é_legit, valor_legit, reason_legit, tipo_legit = verificar_salario_legitimo(texto_completo, trecho)
+        if é_legit and citizenid:
             logs = carregar_salary_legit_logs()
             if citizenid not in logs:
                 logs[citizenid] = []
@@ -418,91 +429,91 @@ async def on_message(message):
                     for cid in SALARY_LEGIT_ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_legit, "Alerta Salário Legítimo")
 
-    # --- Spam ---
-    async with spam_lock:
-        for key in list(log_history.keys()):
-            valid = [ts for ts in log_history[key] if (now - ts).total_seconds() < TIME_WINDOW_SECONDS]
-            if not valid:
-                del log_history[key]
-            else:
-                log_history[key] = valid
+        # --- Spam ---
+        async with spam_lock:
+            for key in list(log_history.keys()):
+                valid = [ts for ts in log_history[key] if (now - ts).total_seconds() < TIME_WINDOW_SECONDS]
+                if not valid:
+                    del log_history[key]
+                else:
+                    log_history[key] = valid
 
-        for key in list(alerted_logs.keys()):
-            if (now - alerted_logs[key]).total_seconds() >= TIME_WINDOW_SECONDS:
-                del alerted_logs[key]
+            for key in list(alerted_logs.keys()):
+                if (now - alerted_logs[key]).total_seconds() >= TIME_WINDOW_SECONDS:
+                    del alerted_logs[key]
 
-        if spam_key in alerted_logs:
-            return
+            if spam_key in alerted_logs:
+                continue
 
-        if spam_key not in log_history:
-            log_history[spam_key] = []
-        log_history[spam_key].append(now)
+            if spam_key not in log_history:
+                log_history[spam_key] = []
+            log_history[spam_key].append(now)
 
-        key_hash = spam_log_key_hash(spam_key)
-        cutoff_load = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
-        if key_hash not in spam_memory:
-            disk_data = carregar_spam_logs()
-            existing = disk_data.get(key_hash, {}).get("logs", [])
+            key_hash = spam_log_key_hash(spam_key)
+            cutoff_load = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
+            if key_hash not in spam_memory:
+                disk_data = carregar_spam_logs()
+                existing = disk_data.get(key_hash, {}).get("logs", [])
+                try:
+                    existing = [e for e in existing if parse_timestamp(e.get("timestamp", "")) > cutoff_load]
+                except (ValueError, TypeError):
+                    existing = []
+                spam_memory[key_hash] = {"trecho": trecho, "logs": list(existing)}
+            ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
+            ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
+            spam_memory[key_hash]["logs"].append({
+                "timestamp": ts_armazenar,
+                "display": ts_display,
+                "content": texto_completo,
+            })
+            spam_memory[key_hash]["trecho"] = trecho
+            logs_para_alerta = list(spam_memory[key_hash]["logs"])
+            cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
             try:
-                existing = [e for e in existing if parse_timestamp(e.get("timestamp", "")) > cutoff_load]
+                spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
             except (ValueError, TypeError):
-                existing = []
-            spam_memory[key_hash] = {"trecho": trecho, "logs": list(existing)}
-        ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
-        ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
-        spam_memory[key_hash]["logs"].append({
-            "timestamp": ts_armazenar,
-            "display": ts_display,
-            "content": texto_completo,
-        })
-        spam_memory[key_hash]["trecho"] = trecho
-        logs_para_alerta = list(spam_memory[key_hash]["logs"])
-        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
-        try:
-            spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
-        except (ValueError, TypeError):
-            spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if e.get("timestamp")]
-        spam_data_persist = {k: {"trecho": v["trecho"], "logs": v["logs"]} for k, v in spam_memory.items()}
-        salvar_spam_logs(spam_data_persist)
+                spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if e.get("timestamp")]
+            spam_data_persist = {k: {"trecho": v["trecho"], "logs": v["logs"]} for k, v in spam_memory.items()}
+            salvar_spam_logs(spam_data_persist)
 
-        log_count = len(log_history[spam_key])
-        logger.info("AddMoney detectado. Chave: '%s'. Contagem: %s/%s", spam_key, log_count, LOG_COUNT_THRESHOLD)
+            log_count = len(log_history[spam_key])
+            logger.info("AddMoney detectado. Chave: '%s'. Contagem: %s/%s", spam_key, log_count, LOG_COUNT_THRESHOLD)
 
-        if log_count == LOG_COUNT_THRESHOLD:
-            logger.info("!!! ALERTA DE SPAM !!! Chave: %s", spam_key)
-            alerted_logs[spam_key] = now
+            if log_count == LOG_COUNT_THRESHOLD:
+                logger.info("!!! ALERTA DE SPAM !!! Chave: %s", spam_key)
+                alerted_logs[spam_key] = now
 
-            match_reason = RE_REASON.search(texto_completo)
-            reason = match_reason.group(1).strip().lower() if match_reason else ""
-            pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
+                match_reason = RE_REASON.search(texto_completo)
+                reason = match_reason.group(1).strip().lower() if match_reason else ""
+                pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
 
-            if not pular_alerta_salario:
-                all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo, "timestamp": ts_armazenar, "display": ts_display}]
-                all_logs.sort(key=lambda e: e.get("timestamp", ""))
-                def fmt_log_completo(i, e):
-                    content = e.get("content", "")
-                    if content:
-                        return f"**Log {i + 1}:**\n{content.strip()}"
-                    ts = e.get("display") or (parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S") if e.get("timestamp") else "?")
-                    return f"**Log {i + 1}:** {ts}"
-                logs_texto = "\n\n".join(
-                    fmt_log_completo(i, e)
-                    for i, e in enumerate(all_logs)
-                )
-                trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                alert_message = (
-                    f"@everyone ALERTA DE SPAM DETECTADO!\n"
-                    f"{trecho_mod}\n"
-                    f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
-                    f"**Logs detectados ({len(all_logs)} total):**\n\n{logs_texto}"
-                )
-                for cid in ALERT_CHANNELS:
-                    await enviar_alerta(cid, alert_message, "Alerta Spam")
-            else:
-                logger.info("Alerta spam ignorado - reason legítimo: %s", reason)
+                if not pular_alerta_salario:
+                    all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo, "timestamp": ts_armazenar, "display": ts_display}]
+                    all_logs.sort(key=lambda e: e.get("timestamp", ""))
+                    def fmt_log_completo(i, e):
+                        content = e.get("content", "")
+                        if content:
+                            return f"**Log {i + 1}:**\n{content.strip()}"
+                        ts = e.get("display") or (parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S") if e.get("timestamp") else "?")
+                        return f"**Log {i + 1}:** {ts}"
+                    logs_texto_alert = "\n\n".join(
+                        fmt_log_completo(i, e)
+                        for i, e in enumerate(all_logs)
+                    )
+                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                    alert_message = (
+                        f"@everyone ALERTA DE SPAM DETECTADO!\n"
+                        f"{trecho_mod}\n"
+                        f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
+                        f"**Logs detectados ({len(all_logs)} total):**\n\n{logs_texto_alert}"
+                    )
+                    for cid in ALERT_CHANNELS:
+                        await enviar_alerta(cid, alert_message, "Alerta Spam")
+                else:
+                    logger.info("Alerta spam ignorado - reason legítimo: %s", reason)
 
-            if spam_key in log_history:
-                del log_history[spam_key]
+                if spam_key in log_history:
+                    del log_history[spam_key]
 
 
 if __name__ == "__main__":
