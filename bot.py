@@ -49,6 +49,7 @@ alerted_logs = {}
 alerted_salary_chains = {}  # citizenid -> {"chain": tuple, "timestamp": datetime}
 alerted_salary_legit_chains = {}
 spam_lock = asyncio.Lock()
+spam_memory = {}  # key_hash -> {"logs": [...], "trecho": str} - cache em memória para acumular
 
 # --- PARÂMETROS ---
 TIME_WINDOW_SECONDS = int(os.getenv("TIME_WINDOW_SECONDS", "60"))
@@ -437,25 +438,32 @@ async def on_message(message):
             log_history[spam_key] = []
         log_history[spam_key].append(now)
 
-        spam_data = carregar_spam_logs()
         key_hash = spam_log_key_hash(spam_key)
-        if key_hash not in spam_data:
-            spam_data[key_hash] = {"trecho": trecho, "logs": [], "spam_key": spam_key}
+        cutoff_load = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
+        if key_hash not in spam_memory:
+            disk_data = carregar_spam_logs()
+            existing = disk_data.get(key_hash, {}).get("logs", [])
+            try:
+                existing = [e for e in existing if parse_timestamp(e.get("timestamp", "")) > cutoff_load]
+            except (ValueError, TypeError):
+                existing = []
+            spam_memory[key_hash] = {"trecho": trecho, "logs": list(existing)}
         ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
         ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
-        spam_data[key_hash]["logs"].append({
+        spam_memory[key_hash]["logs"].append({
             "timestamp": ts_armazenar,
             "display": ts_display,
             "content": texto_completo,
         })
-        spam_data[key_hash]["trecho"] = trecho
-        logs_para_alerta = list(spam_data[key_hash]["logs"])
+        spam_memory[key_hash]["trecho"] = trecho
+        logs_para_alerta = list(spam_memory[key_hash]["logs"])
         cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
         try:
-            spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
+            spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
         except (ValueError, TypeError):
-            spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if e.get("timestamp")]
-        salvar_spam_logs(spam_data)
+            spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if e.get("timestamp")]
+        spam_data_persist = {k: {"trecho": v["trecho"], "logs": v["logs"]} for k, v in spam_memory.items()}
+        salvar_spam_logs(spam_data_persist)
 
         log_count = len(log_history[spam_key])
         logger.info("AddMoney detectado. Chave: '%s'. Contagem: %s/%s", spam_key, log_count, LOG_COUNT_THRESHOLD)
