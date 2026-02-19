@@ -58,6 +58,7 @@ SALARY_DUMP_VALUES = {3000, 5000, 7000, 9000}
 SALARY_LOG_FILE = Path(__file__).parent / "salary_logs.json"
 SALARY_LEGIT_LOG_FILE = Path(__file__).parent / "salary_legit_logs.json"
 SPAM_LOG_FILE = Path(__file__).parent / "spam_logs.json"
+SPAM_ALERTS_FILE = Path(__file__).parent / "spam_alerts.json"
 SPAM_LOG_RETENTION = 2 * 60 * 60
 SALARY_INTERVAL_MIN = 25 * 60
 SALARY_INTERVAL_MAX = 35 * 60
@@ -73,6 +74,15 @@ RE_VALOR = re.compile(r"\$(\d+)")
 RE_TIMESTAMP_LOG = re.compile(r"(\d{1,2}:\d{2}:\d{2}\s+\d{2}-\d{2}-\d{4})")
 
 REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip")
+
+ORDINAIS = (
+    "PRIMEIRO", "SEGUNDO", "TERCEIRO", "QUARTO", "QUINTO", "SEXTO", "SÉTIMO",
+    "OITAVO", "NONO", "DÉCIMO", "DÉCIMO PRIMEIRO", "DÉCIMO SEGUNDO", "DÉCIMO TERCEIRO",
+    "DÉCIMO QUARTO", "DÉCIMO QUINTO", "DÉCIMO SEXTO", "DÉCIMO SÉTIMO", "DÉCIMO OITAVO",
+    "DÉCIMO NONO", "VIGÉSIMO", "VIGÉSIMO PRIMEIRO", "VIGÉSIMO SEGUNDO", "VIGÉSIMO TERCEIRO",
+    "VIGÉSIMO QUARTO", "VIGÉSIMO QUINTO", "VIGÉSIMO SEXTO", "VIGÉSIMO SÉTIMO",
+    "VIGÉSIMO OITAVO", "VIGÉSIMO NONO", "TRIGÉSIMO",
+)
 
 
 def parse_timestamp(ts_str: str):
@@ -189,6 +199,32 @@ def salvar_spam_logs(data):
         logger.error("Erro ao salvar spam_logs.json: %s", e)
 
 
+def carregar_spam_alerts():
+    """Carrega spam_alerts.json: { hour_N: { citizenid: { count, last_log } } }"""
+    try:
+        if SPAM_ALERTS_FILE.exists():
+            with open(SPAM_ALERTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return {}
+
+
+def salvar_spam_alerts(data):
+    try:
+        with open(SPAM_ALERTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except IOError as e:
+        logger.error("Erro ao salvar spam_alerts.json: %s", e)
+
+
+def ordinal_ordem(n):
+    """Retorna ordinal em português: 1 -> PRIMEIRO, 2 -> SEGUNDO, etc."""
+    if 1 <= n <= len(ORDINAIS):
+        return ORDINAIS[n - 1]
+    return f"{n}º"
+
+
 def limpar_chains_antigos(chains_dict, max_age_seconds=SALARY_LOG_RETENTION):
     """Remove entradas antigas dos dicionários de chains alertadas."""
     now = datetime.datetime.now()
@@ -289,7 +325,7 @@ async def on_ready():
     logger.info("🤖 Bot Anti Trigger SCC conectado como %s", client.user)
     logger.info("🎯 Canal monitorado: %s", TARGET_CHANNEL_ID)
     logger.info("⏰ Spam: %s logs em %ss", LOG_COUNT_THRESHOLD, TIME_WINDOW_SECONDS)
-    logger.info("📁 Spam: %s | Dump: 1471831384837460136 | Legítimo: 1473755075670310942", SPAM_LOG_FILE.name)
+    logger.info("📁 Spam: %s | Alertas: %s | Dump: 1471831384837460136 | Legítimo: 1473755075670310942", SPAM_LOG_FILE.name, SPAM_ALERTS_FILE.name)
     logger.info("✅ Bot online e monitorando...")
 
 
@@ -487,29 +523,45 @@ async def on_message(message):
                 reason = match_reason.group(1).strip().lower() if match_reason else ""
                 pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
 
-                if not pular_alerta_salario:
-                    all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo, "timestamp": ts_armazenar, "display": ts_display}]
+                if not pular_alerta_salario and citizenid:
+                    all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo}]
                     all_logs.sort(key=lambda e: e.get("timestamp", ""))
-                    def fmt_log_completo(i, e):
-                        content = e.get("content", "")
-                        if content:
-                            return f"**Log {i + 1}:**\n{content.strip()}"
-                        ts = e.get("display") or (parse_timestamp(e["timestamp"]).strftime("%d-%m-%Y %H:%M:%S") if e.get("timestamp") else "?")
-                        return f"**Log {i + 1}:** {ts}"
-                    logs_texto_alert = "\n\n".join(
-                        fmt_log_completo(i, e)
-                        for i, e in enumerate(all_logs)
-                    )
-                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                    log_exibir = all_logs[-1].get("content", texto_completo).strip()
+
+                    hora_atual = now.hour + 1
+                    if hora_atual > 24:
+                        hora_atual = 1
+                    hour_key = f"hour_{hora_atual}"
+
+                    spam_alerts = carregar_spam_alerts()
+                    if hour_key not in spam_alerts:
+                        spam_alerts[hour_key] = {}
+                    if citizenid not in spam_alerts[hour_key]:
+                        spam_alerts[hour_key][citizenid] = {"count": 0, "last_log": ""}
+                    spam_alerts[hour_key][citizenid]["count"] += 1
+                    spam_alerts[hour_key][citizenid]["last_log"] = log_exibir
+                    salvar_spam_alerts(spam_alerts)
+
+                    count = spam_alerts[hour_key][citizenid]["count"]
+                    ordinal = ordinal_ordem(count)
                     alert_message = (
-                        f"@everyone ALERTA DE SPAM DETECTADO!\n"
-                        f"{trecho_mod}\n"
+                        f"@everyone ALERTA DE SPAM DETECTADO! {ordinal} ALERTA\n\n"
+                        f"{log_exibir}\n\n"
                         f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
-                        f"**Logs detectados ({len(all_logs)} total):**\n\n{logs_texto_alert}"
+                        f"Este PLAYER foi alertado **{count}** vez(es) dentro da hora **{hora_atual}**"
                     )
                     for cid in ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_message, "Alerta Spam")
-                else:
+                elif not pular_alerta_salario and not citizenid:
+                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                    alert_message = (
+                        f"@everyone ALERTA DE SPAM DETECTADO!\n\n"
+                        f"{texto_completo.strip()}\n\n"
+                        f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
+                    )
+                    for cid in ALERT_CHANNELS:
+                        await enviar_alerta(cid, alert_message, "Alerta Spam")
+                elif pular_alerta_salario:
                     logger.info("Alerta spam ignorado - reason legítimo: %s", reason)
 
                 if spam_key in log_history:
