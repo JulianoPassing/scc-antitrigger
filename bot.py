@@ -320,6 +320,66 @@ async def enviar_alerta(canal_id, mensagem, tipo="alerta"):
     return False
 
 
+async def enviar_alerta_dump_embed(canal_id, trecho_mod, citizenid, cadeia_logs, tipo="Alerta Dump"):
+    """Envia alerta de dump de salário em embed."""
+    try:
+        channel = client.get_channel(canal_id)
+        if not channel:
+            logger.warning("Canal não encontrado: %s", canal_id)
+            return False
+        def fmt(e):
+            c = e.get("content", "")
+            return c.strip() if c else f"${e.get('value')} ({e.get('type', 'bank')}) - {e.get('reason', '')}"
+        logs_texto = "\n\n---\n\n".join(fmt(e) for e in cadeia_logs)
+        logs_trunc = logs_texto[:4000] + "..." if len(logs_texto) > 4000 else logs_texto
+        embed = discord.Embed(
+            title="⚠️ SALÁRIO SEM REASON — ~30 MIN",
+            description=logs_trunc,
+            color=0xE74C3C,
+        )
+        embed.add_field(name="CitizenID", value=citizenid, inline=True)
+        embed.add_field(name="Logs", value=str(len(cadeia_logs)), inline=True)
+        embed.set_footer(text=trecho_mod[:100] if len(trecho_mod) > 100 else trecho_mod)
+        await channel.send(content="@everyone", embed=embed)
+        logger.info("%s enviado para canal %s", tipo, canal_id)
+        return True
+    except (discord.HTTPException, discord.Forbidden) as e:
+        logger.error("Erro ao enviar embed dump: %s", e)
+    except Exception as e:
+        logger.exception("Erro inesperado: %s", e)
+    return False
+
+
+async def enviar_alerta_legit_embed(canal_id, trecho_mod, citizenid, cadeia_logs, tipo="Alerta Legítimo"):
+    """Envia alerta de salário legítimo em embed."""
+    try:
+        channel = client.get_channel(canal_id)
+        if not channel:
+            logger.warning("Canal não encontrado: %s", canal_id)
+            return False
+        def fmt(e):
+            c = e.get("content", "")
+            return c.strip() if c else f"${e.get('value')} ({e.get('type', 'bank')}) - {e.get('reason', '')}"
+        logs_texto = "\n\n---\n\n".join(fmt(e) for e in cadeia_logs)
+        logs_trunc = logs_texto[:4000] + "..." if len(logs_texto) > 4000 else logs_texto
+        embed = discord.Embed(
+            title="✅ SALÁRIO LEGÍTIMO — ~30 MIN",
+            description=logs_trunc,
+            color=0x27AE60,
+        )
+        embed.add_field(name="CitizenID", value=citizenid, inline=True)
+        embed.add_field(name="Logs", value=str(len(cadeia_logs)), inline=True)
+        embed.set_footer(text=trecho_mod[:100] if len(trecho_mod) > 100 else trecho_mod)
+        await channel.send(content="@everyone", embed=embed)
+        logger.info("%s enviado para canal %s", tipo, canal_id)
+        return True
+    except (discord.HTTPException, discord.Forbidden) as e:
+        logger.error("Erro ao enviar embed legit: %s", e)
+    except Exception as e:
+        logger.exception("Erro inesperado: %s", e)
+    return False
+
+
 async def enviar_alerta_spam_embed(canal_id, log_exibir, count, hora_atual, tipo="Alerta Spam"):
     """Envia alerta de spam em embed minimalista."""
     try:
@@ -430,22 +490,8 @@ async def on_message(message):
                 if not (ultima_chain == chain_key):
                     alerted_salary_chains[citizenid] = {"chain": chain_key, "timestamp": now}
                     trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                    def fmt_salary_log(i, e):
-                        content = e.get("content", "")
-                        if content:
-                            return f"**Log {i + 1}:**\n{content.strip()}"
-                        return f"  {i + 1}. ${e['value']} ({e.get('type', 'bank')}) - reason: {e['reason']} | {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
-                    logs_texto = "\n\n".join(
-                        fmt_salary_log(i, e) for i, e in enumerate(cadeia_logs)
-                    )
-                    alert_interval = (
-                        f"@everyone ⚠️ SALÁRIO SEM REASON EM INTERVALOS DE ~30 MIN!\n"
-                        f"{trecho_mod}\n"
-                        f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min sem reason correto\n\n"
-                        f"**Logs detectados no intervalo:**\n\n{logs_texto}"
-                    )
                     for cid in SALARY_DUMP_ALERT_CHANNELS:
-                        await enviar_alerta(cid, alert_interval, "Alerta Dump 30min")
+                        await enviar_alerta_dump_embed(cid, trecho_mod, citizenid, cadeia_logs)
 
         # --- ALERTA: Salário Legítimo ---
         é_legit, valor_legit, reason_legit, tipo_legit = verificar_salario_legitimo(texto_completo, trecho)
@@ -474,22 +520,8 @@ async def on_message(message):
                 if not (ultima_chain == chain_key):
                     alerted_salary_legit_chains[citizenid] = {"chain": chain_key, "timestamp": now}
                     trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                    def fmt_legit_log(i, e):
-                        content = e.get("content", "")
-                        if content:
-                            return f"**Log {i + 1}:**\n{content.strip()}"
-                        return f"  {i + 1}. ${e['value']} ({e.get('type', 'bank')}) - reason: {e['reason']} | {parse_timestamp(e['timestamp']).strftime('%d-%m-%Y %H:%M:%S')}"
-                    logs_texto = "\n\n".join(
-                        fmt_legit_log(i, e) for i, e in enumerate(cadeia_logs)
-                    )
-                    alert_legit = (
-                        f"@everyone ✅ SALÁRIO LEGÍTIMO EM INTERVALOS DE ~30 MIN\n"
-                        f"{trecho_mod}\n"
-                        f"CitizenID: {citizenid} - {len(cadeia_logs)} logs em ~30 min (reason correto)\n\n"
-                        f"**Logs detectados:**\n\n{logs_texto}"
-                    )
                     for cid in SALARY_LEGIT_ALERT_CHANNELS:
-                        await enviar_alerta(cid, alert_legit, "Alerta Salário Legítimo")
+                        await enviar_alerta_legit_embed(cid, trecho_mod, citizenid, cadeia_logs)
 
         # --- Spam ---
         async with spam_lock:
