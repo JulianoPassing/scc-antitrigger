@@ -323,12 +323,12 @@ async def on_message(message):
     trecho = extrair_trecho(texto_completo)
     if not trecho:
         return
-    log_key = trecho
+    citizenid = extrair_citizenid(texto_completo)
+    spam_key = citizenid if citizenid else trecho
 
     # --- ALERTA: Dump de Salário ---
     é_dump, valor, reason, tipo = verificar_dump_salario(texto_completo, trecho)
     if é_dump:
-        citizenid = extrair_citizenid(texto_completo)
         if citizenid:
             logs = carregar_salary_logs()
             if citizenid not in logs:
@@ -430,17 +430,17 @@ async def on_message(message):
             if (now - alerted_logs[key]).total_seconds() >= TIME_WINDOW_SECONDS:
                 del alerted_logs[key]
 
-        if log_key in alerted_logs:
+        if spam_key in alerted_logs:
             return
 
-        if log_key not in log_history:
-            log_history[log_key] = []
-        log_history[log_key].append(now)
+        if spam_key not in log_history:
+            log_history[spam_key] = []
+        log_history[spam_key].append(now)
 
         spam_data = carregar_spam_logs()
-        key_hash = spam_log_key_hash(log_key)
+        key_hash = spam_log_key_hash(spam_key)
         if key_hash not in spam_data:
-            spam_data[key_hash] = {"trecho": log_key, "logs": []}
+            spam_data[key_hash] = {"trecho": trecho, "logs": [], "spam_key": spam_key}
         ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
         ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
         spam_data[key_hash]["logs"].append({
@@ -448,7 +448,7 @@ async def on_message(message):
             "display": ts_display,
             "content": texto_completo,
         })
-        spam_data[key_hash]["trecho"] = log_key
+        spam_data[key_hash]["trecho"] = trecho
         logs_para_alerta = list(spam_data[key_hash]["logs"])
         cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
         try:
@@ -457,12 +457,12 @@ async def on_message(message):
             spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if e.get("timestamp")]
         salvar_spam_logs(spam_data)
 
-        log_count = len(log_history[log_key])
-        logger.info("AddMoney detectado. Chave: '%s...'. Contagem: %s/%s", log_key[:50], log_count, LOG_COUNT_THRESHOLD)
+        log_count = len(log_history[spam_key])
+        logger.info("AddMoney detectado. Chave: '%s'. Contagem: %s/%s", spam_key, log_count, LOG_COUNT_THRESHOLD)
 
         if log_count == LOG_COUNT_THRESHOLD:
-            logger.info("!!! ALERTA DE SPAM !!! Chave: %s", log_key[:50])
-            alerted_logs[log_key] = now
+            logger.info("!!! ALERTA DE SPAM !!! Chave: %s", spam_key)
+            alerted_logs[spam_key] = now
 
             match_reason = RE_REASON.search(texto_completo)
             reason = match_reason.group(1).strip().lower() if match_reason else ""
@@ -481,8 +481,10 @@ async def on_message(message):
                     fmt_log_completo(i, e)
                     for i, e in enumerate(all_logs)
                 )
+                trecho_mod = substituir_rhis5udie_por_vip(trecho)
                 alert_message = (
                     f"@everyone ALERTA DE SPAM DETECTADO!\n"
+                    f"{trecho_mod}\n"
                     f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
                     f"**Logs detectados ({len(all_logs)} total):**\n\n{logs_texto}"
                 )
@@ -491,8 +493,8 @@ async def on_message(message):
             else:
                 logger.info("Alerta spam ignorado - reason legítimo: %s", reason)
 
-            if log_key in log_history:
-                del log_history[log_key]
+            if spam_key in log_history:
+                del log_history[spam_key]
 
 
 if __name__ == "__main__":
