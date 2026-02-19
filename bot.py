@@ -320,6 +320,32 @@ async def enviar_alerta(canal_id, mensagem, tipo="alerta"):
     return False
 
 
+async def enviar_alerta_spam_embed(canal_id, log_exibir, count, hora_atual, tipo="Alerta Spam"):
+    """Envia alerta de spam em embed minimalista."""
+    try:
+        channel = client.get_channel(canal_id)
+        if not channel:
+            logger.warning("Canal não encontrado: %s", canal_id)
+            return False
+        log_trunc = log_exibir[:4000] + "..." if len(log_exibir) > 4000 else log_exibir
+        embed = discord.Embed(
+            title=f"🚨 SPAM DETECTADO — {count}x",
+            description=log_trunc,
+            color=0xE67E22,
+        )
+        embed.set_footer(text=f"Alertado {count}x na hora {hora_atual}  •  SUSPEITO 🧑🏻‍🎄")
+        await channel.send(content="@everyone", embed=embed)
+        logger.info("%s enviado para canal %s", tipo, canal_id)
+        return True
+    except discord.HTTPException as e:
+        logger.error("Erro HTTP ao enviar embed spam para canal %s: %s", canal_id, e)
+    except discord.Forbidden:
+        logger.error("Sem permissão para enviar no canal %s", canal_id)
+    except Exception as e:
+        logger.exception("Erro inesperado ao enviar alerta spam: %s", e)
+    return False
+
+
 @client.event
 async def on_ready():
     logger.info("🤖 Bot Anti Trigger SCC conectado como %s", client.user)
@@ -538,20 +564,13 @@ async def on_message(message):
                         spam_alerts[hour_key] = {}
                     if citizenid not in spam_alerts[hour_key]:
                         spam_alerts[hour_key][citizenid] = {"count": 0, "last_log": ""}
-                    spam_alerts[hour_key][citizenid]["count"] += 1
+                    spam_alerts[hour_key][citizenid]["count"] += LOG_COUNT_THRESHOLD
                     spam_alerts[hour_key][citizenid]["last_log"] = log_exibir
                     salvar_spam_alerts(spam_alerts)
 
                     count = spam_alerts[hour_key][citizenid]["count"]
-                    ordinal = ordinal_ordem(count)
-                    alert_message = (
-                        f"@everyone ALERTA DE SPAM DETECTADO! {ordinal} ALERTA\n\n"
-                        f"{log_exibir}\n\n"
-                        f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄\n\n"
-                        f"Este PLAYER foi alertado **{count}** vez(es) dentro da hora **{hora_atual}**"
-                    )
                     for cid in ALERT_CHANNELS:
-                        await enviar_alerta(cid, alert_message, "Alerta Spam")
+                        await enviar_alerta_spam_embed(cid, log_exibir, count, hora_atual)
                 elif not pular_alerta_salario and not citizenid:
                     trecho_mod = substituir_rhis5udie_por_vip(trecho)
                     alert_message = (
