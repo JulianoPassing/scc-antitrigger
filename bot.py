@@ -446,8 +446,12 @@ async def on_message(message):
         "content": texto_completo,
     })
     spam_data[key_hash]["trecho"] = log_key
+    logs_para_alerta = list(spam_data[key_hash]["logs"])
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
-    spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if parse_timestamp(e["timestamp"]) > cutoff]
+    try:
+        spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
+    except (ValueError, TypeError):
+        spam_data[key_hash]["logs"] = [e for e in spam_data[key_hash]["logs"] if e.get("timestamp")]
     salvar_spam_logs(spam_data)
 
     log_count = len(log_history[log_key])
@@ -463,7 +467,7 @@ async def on_message(message):
 
         if not pular_alerta_salario:
             log_key_modificado = substituir_rhis5udie_por_vip(log_key)
-            all_logs = spam_data.get(key_hash, {}).get("logs", [])
+            all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo, "timestamp": ts_armazenar, "display": ts_display}]
             all_logs.sort(key=lambda e: e.get("timestamp", ""))
             def fmt_log_completo(i, e):
                 content = e.get("content", "")
