@@ -461,7 +461,13 @@ async def on_message(message):
         if not trecho:
             continue
         citizenid = extrair_citizenid(texto_completo)
-        spam_key = citizenid if citizenid else trecho
+        valor_match = RE_VALOR.search(texto_completo)
+        valor = valor_match.group(1) if valor_match else ""
+        tipo = extrair_tipo_dinheiro(texto_completo) or ""
+        if citizenid and valor and tipo:
+            spam_key = f"{citizenid}_{valor}_{tipo}"
+        else:
+            spam_key = citizenid if citizenid else trecho
 
         # --- ALERTA: Dump de Salário ---
         é_dump, valor, reason, tipo = verificar_dump_salario(texto_completo, trecho)
@@ -581,7 +587,7 @@ async def on_message(message):
                 reason = match_reason.group(1).strip().lower() if match_reason else ""
                 pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
 
-                if not pular_alerta_salario and citizenid:
+                if not pular_alerta_salario and spam_key:
                     all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo}]
                     all_logs.sort(key=lambda e: e.get("timestamp", ""))
                     log_exibir = all_logs[-1].get("content", texto_completo).strip()
@@ -594,13 +600,13 @@ async def on_message(message):
                     spam_alerts = carregar_spam_alerts()
                     if hour_key not in spam_alerts:
                         spam_alerts[hour_key] = {}
-                    if citizenid not in spam_alerts[hour_key]:
-                        spam_alerts[hour_key][citizenid] = {"count": 0, "last_log": ""}
-                    spam_alerts[hour_key][citizenid]["count"] += LOG_COUNT_THRESHOLD
-                    spam_alerts[hour_key][citizenid]["last_log"] = log_exibir
+                    if spam_key not in spam_alerts[hour_key]:
+                        spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
+                    spam_alerts[hour_key][spam_key]["count"] += LOG_COUNT_THRESHOLD
+                    spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
                     salvar_spam_alerts(spam_alerts)
 
-                    count = spam_alerts[hour_key][citizenid]["count"]
+                    count = spam_alerts[hour_key][spam_key]["count"]
                     for cid in ALERT_CHANNELS:
                         await enviar_alerta_spam_embed(cid, log_exibir, count, hora_atual)
                 elif not pular_alerta_salario and not citizenid:
