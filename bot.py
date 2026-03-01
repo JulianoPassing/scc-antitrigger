@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import datetime
 import re
+import unicodedata
 
 load_dotenv()
 
@@ -88,6 +89,13 @@ ORDINAIS = (
 def parse_timestamp(ts_str: str):
     """Converte string ISO para datetime (timezone-aware)."""
     return datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+
+
+def normalizar_reason(reason: str) -> str:
+    """Normaliza reason para comparação robusta (minúsculo, sem acentos, espaço simples)."""
+    txt = unicodedata.normalize("NFD", (reason or ""))
+    txt = "".join(ch for ch in txt if unicodedata.category(ch) != "Mn")
+    return " ".join(txt.lower().strip().split())
 
 
 def truncar_mensagem(texto: str, limite: int = DISCORD_MESSAGE_LIMIT) -> str:
@@ -271,8 +279,9 @@ def verificar_dump_salario(texto, trecho):
         return False, None, None, None
     match_reason = RE_REASON.search(texto)
     reason_extraido = match_reason.group(1).strip() if match_reason else "não encontrado"
+    reason_normalizado = normalizar_reason(reason_extraido)
     if match_reason:
-        if reason_extraido.lower() in REASONS_SALARIO_LEGITIMOS:
+        if reason_normalizado in REASONS_SALARIO_LEGITIMOS:
             return False, None, None, None
     match = RE_VALOR.search(texto)
     if not match:
@@ -289,7 +298,8 @@ def verificar_salario_legitimo(texto, trecho):
         return False, None, None, None
     match_reason = RE_REASON.search(texto)
     reason_extraido = match_reason.group(1).strip() if match_reason else ""
-    if not match_reason or reason_extraido.lower() not in REASONS_SALARIO_LEGITIMOS:
+    reason_normalizado = normalizar_reason(reason_extraido)
+    if not match_reason or reason_normalizado not in REASONS_SALARIO_LEGITIMOS:
         return False, None, None, None
     match = RE_VALOR.search(texto)
     if not match:
@@ -403,6 +413,32 @@ async def enviar_alerta_spam_embed(canal_id, log_exibir, count, hora_atual, tipo
         logger.error("Sem permissão para enviar no canal %s", canal_id)
     except Exception as e:
         logger.exception("Erro inesperado ao enviar alerta spam: %s", e)
+    return False
+
+
+async def enviar_alerta_spam_salario_embed(canal_id, log_exibir, count, hora_atual, tipo="Alerta Spam Salário"):
+    """Envia alerta de spam de salário legítimo (VIP/Comprado) em embed verde."""
+    try:
+        channel = client.get_channel(canal_id)
+        if not channel:
+            logger.warning("Canal não encontrado: %s", canal_id)
+            return False
+        log_trunc = log_exibir[:4000] + "..." if len(log_exibir) > 4000 else log_exibir
+        embed = discord.Embed(
+            title=f"SPAM DE SALARIO - {count}x",
+            description=log_trunc,
+            color=0x27AE60,
+        )
+        embed.set_footer(text=f"Alertado {count}x na hora {hora_atual} - Salario VIP/Comprado")
+        await channel.send(content="@everyone", embed=embed)
+        logger.info("%s enviado para canal %s", tipo, canal_id)
+        return True
+    except discord.HTTPException as e:
+        logger.error("Erro HTTP ao enviar embed spam salário para canal %s: %s", canal_id, e)
+    except discord.Forbidden:
+        logger.error("Sem permissão para enviar no canal %s", canal_id)
+    except Exception as e:
+        logger.exception("Erro inesperado ao enviar alerta spam salário: %s", e)
     return False
 
 
@@ -584,7 +620,7 @@ async def on_message(message):
                 alerted_logs[spam_key] = now
 
                 match_reason = RE_REASON.search(texto_completo)
-                reason = match_reason.group(1).strip().lower() if match_reason else ""
+                reason = normalizar_reason(match_reason.group(1).strip()) if match_reason else ""
                 pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
 
                 if not pular_alerta_salario and spam_key:
@@ -618,8 +654,28 @@ async def on_message(message):
                     )
                     for cid in ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_message, "Alerta Spam")
-                elif pular_alerta_salario:
-                    logger.info("Alerta spam ignorado - reason legítimo: %s", reason)
+                elif pular_alerta_salario and spam_key:
+                    all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo}]
+                    all_logs.sort(key=lambda e: e.get("timestamp", ""))
+                    log_exibir = all_logs[-1].get("content", texto_completo).strip()
+
+                    hora_atual = now.hour + 1
+                    if hora_atual > 24:
+                        hora_atual = 1
+                    hour_key = f"hour_{hora_atual}"
+
+                    spam_alerts = carregar_spam_alerts()
+                    if hour_key not in spam_alerts:
+                        spam_alerts[hour_key] = {}
+                    if spam_key not in spam_alerts[hour_key]:
+                        spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
+                    spam_alerts[hour_key][spam_key]["count"] += LOG_COUNT_THRESHOLD
+                    spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
+                    salvar_spam_alerts(spam_alerts)
+
+                    count = spam_alerts[hour_key][spam_key]["count"]
+                    for cid in SALARY_LEGIT_ALERT_CHANNELS:
+                        await enviar_alerta_spam_salario_embed(cid, log_exibir, count, hora_atual)
 
                 if spam_key in log_history:
                     del log_history[spam_key]
