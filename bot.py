@@ -74,7 +74,7 @@ RE_REASON = re.compile(r"reason:\s*([^\n*]+)", re.IGNORECASE)
 RE_VALOR = re.compile(r"\$(\d+)")
 RE_TIMESTAMP_LOG = re.compile(r"(\d{1,2}:\d{2}:\d{2}\s+\d{2}-\d{2}-\d{4})")
 
-REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip")
+REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip", "juli v")
 
 ORDINAIS = (
     "PRIMEIRO", "SEGUNDO", "TERCEIRO", "QUARTO", "QUINTO", "SEXTO", "SÉTIMO",
