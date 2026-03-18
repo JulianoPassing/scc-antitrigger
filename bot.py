@@ -71,7 +71,7 @@ RE_RHIS5UDIE = re.compile(r"rhis5udie(_dlc)?")
 RE_CITIZENID = re.compile(r"citizenid:\s*([A-Z0-9]+)", re.IGNORECASE)
 RE_REASON = re.compile(r"reason:\s*([^\n*]+)", re.IGNORECASE)
 RE_VALOR = re.compile(r"\$(\d+)")
-RE_TIMESTAMP_LOG = re.compile(r"(\d{1,2}:\d{2}:\d{2}\s+\d{2}-\d{2}-\d{4})")
+RE_TIMESTAMP_LOG = re.compile(r"(\d{1,2}:\d{2}:\d{2}\s+\d{2}[-/]\d{2}[-/]\d{4})")
 
 REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip", "juli v")
 
@@ -125,15 +125,16 @@ def extrair_tipo_dinheiro(texto):
 
 def extrair_timestamp_da_log(texto):
     """
-    Extrai o horário da log (ex: 13:27:38 02-18-2026) do texto da mensagem.
+    Extrai o horário da log do texto da mensagem.
     Retorna (display_str, iso_str) para exibição e ordenação, ou (None, None) se não encontrar.
-    Formato da log: HH:MM:SS MM-DD-YYYY ou HH:MM:SS DD-MM-YYYY
+    Suporta: HH:MM:SS MM-DD-YYYY, HH:MM:SS DD-MM-YYYY, HH:MM:SS DD/MM/YYYY
     """
     match = RE_TIMESTAMP_LOG.search(texto)
     if not match:
         return None, None
     ts_str = match.group(1).strip()
-    for fmt in ("%H:%M:%S %m-%d-%Y", "%H:%M:%S %d-%m-%Y"):
+    formats = ("%H:%M:%S %m-%d-%Y", "%H:%M:%S %d-%m-%Y", "%H:%M:%S %d/%m/%Y", "%H:%M:%S %m/%d/%Y")
+    for fmt in formats:
         try:
             dt = datetime.datetime.strptime(ts_str, fmt).replace(tzinfo=datetime.timezone.utc)
             display = dt.strftime("%d-%m-%Y %H:%M:%S")
@@ -141,7 +142,7 @@ def extrair_timestamp_da_log(texto):
             return display, iso_str
         except ValueError:
             continue
-    return ts_str, ts_str
+    return None, None
 
 
 def carregar_salary_logs():
@@ -256,7 +257,7 @@ def contar_logs_em_janela(logs_com_ts, window_seconds=TIME_WINDOW_SECONDS):
     if not parsed:
         return 0, []
     ref = max(t for t, _ in parsed)
-    dentro = [e for t, e in parsed if (ref - t).total_seconds() < window_seconds]
+    dentro = [e for t, e in parsed if (ref - t).total_seconds() <= window_seconds]
     return len(dentro), dentro
 
 
@@ -639,7 +640,10 @@ async def on_message(message):
                 existing = [e for e in existing if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff_load]
                 spam_memory[key_hash] = {"trecho": trecho, "logs": list(existing)}
 
-            ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
+            ts_valido = ts_iso and parse_timestamp(ts_iso)
+            ts_armazenar = ts_iso if ts_valido else datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if not ts_valido and ts_iso:
+                logger.warning("SPAM: timestamp da log não parseável, usando horário de chegada")
             spam_memory[key_hash]["logs"].append({
                 "timestamp": ts_armazenar,
                 "display": ts_display,
