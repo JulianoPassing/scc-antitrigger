@@ -54,6 +54,7 @@ spam_memory = {}  # key_hash -> {"logs": [...], "trecho": str} - cache em memór
 # --- PARÂMETROS ---
 TIME_WINDOW_SECONDS = int(os.getenv("TIME_WINDOW_SECONDS", "60"))
 LOG_COUNT_THRESHOLD = int(os.getenv("LOG_COUNT_THRESHOLD", "3"))
+LOG_SERVER_UTC_OFFSET = int(os.getenv("LOG_SERVER_UTC_OFFSET_HOURS", "-3"))  # Brasil UTC-3
 SALARY_DUMP_VALUES = {3000, 5000, 7000, 9000}
 SALARY_LOG_FILE = Path(__file__).parent / "salary_logs.json"
 SALARY_LEGIT_LOG_FILE = Path(__file__).parent / "salary_legit_logs.json"
@@ -136,9 +137,11 @@ def extrair_timestamp_da_log(texto):
     formats = ("%H:%M:%S %m-%d-%Y", "%H:%M:%S %d-%m-%Y", "%H:%M:%S %d/%m/%Y", "%H:%M:%S %m/%d/%Y")
     for fmt in formats:
         try:
-            dt = datetime.datetime.strptime(ts_str, fmt).replace(tzinfo=datetime.timezone.utc)
-            display = dt.strftime("%d-%m-%Y %H:%M:%S")
-            iso_str = dt.isoformat()
+            dt = datetime.datetime.strptime(ts_str, fmt)
+            dt = dt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=LOG_SERVER_UTC_OFFSET)))
+            dt_utc = dt.astimezone(datetime.timezone.utc)
+            display = dt_utc.strftime("%d-%m-%Y %H:%M:%S")
+            iso_str = dt_utc.isoformat()
             return display, iso_str
         except ValueError:
             continue
