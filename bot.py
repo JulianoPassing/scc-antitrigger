@@ -45,7 +45,6 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 
 # --- MEMÓRIA DO BOT ---
-log_history = {}
 alerted_logs = {}
 alerted_salary_chains = {}  # citizenid -> {"chain": tuple, "timestamp": datetime}
 alerted_salary_legit_chains = {}
@@ -224,6 +223,30 @@ def salvar_spam_alerts(data):
             json.dump(data, f, indent=2, ensure_ascii=False)
     except IOError as e:
         logger.error("Erro ao salvar spam_alerts.json: %s", e)
+
+
+def contar_logs_em_janela(logs_com_ts, window_seconds=TIME_WINDOW_SECONDS):
+    """
+    Conta quantas logs estão dentro da janela de tempo, usando o timestamp da log.
+    logs_com_ts: lista de dicts com chave "timestamp" (ISO)
+    Retorna (count, logs_dentro_janela).
+    """
+    if not logs_com_ts:
+        return 0, []
+    parsed = []
+    for e in logs_com_ts:
+        try:
+            ts = parse_timestamp(e.get("timestamp", ""))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=datetime.timezone.utc)
+            parsed.append((ts, e))
+        except (ValueError, TypeError):
+            continue
+    if not parsed:
+        return 0, []
+    ref = max(t for t, _ in parsed)
+    dentro = [e for t, e in parsed if (ref - t).total_seconds() < window_seconds]
+    return len(dentro), dentro
 
 
 def ordinal_ordem(n):
@@ -490,7 +513,7 @@ async def on_message(message):
     if not logs_texto:
         return
 
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.timezone.utc)
 
     for texto_completo in logs_texto:
         trecho = extrair_trecho(texto_completo)
@@ -565,25 +588,19 @@ async def on_message(message):
                     for cid in SALARY_LEGIT_ALERT_CHANNELS:
                         await enviar_alerta_legit_embed(cid, trecho_mod, citizenid, cadeia_logs)
 
-        # --- Spam ---
-        async with spam_lock:
-            for key in list(log_history.keys()):
-                valid = [ts for ts in log_history[key] if (now - ts).total_seconds() < TIME_WINDOW_SECONDS]
-                if not valid:
-                    del log_history[key]
-                else:
-                    log_history[key] = valid
+        # --- Spam (lógica baseada no horário da log, armazenado em JSON) ---
+        ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
+        ts_da_log = parse_timestamp(ts_iso) if ts_iso else now
+        if ts_da_log.tzinfo is None:
+            ts_da_log = ts_da_log.replace(tzinfo=datetime.timezone.utc)
 
+        async with spam_lock:
             for key in list(alerted_logs.keys()):
                 if (now - alerted_logs[key]).total_seconds() >= TIME_WINDOW_SECONDS:
                     del alerted_logs[key]
 
             if spam_key in alerted_logs:
                 continue
-
-            if spam_key not in log_history:
-                log_history[spam_key] = []
-            log_history[spam_key].append(now)
 
             key_hash = spam_log_key_hash(spam_key)
             cutoff_load = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
@@ -595,7 +612,7 @@ async def on_message(message):
                 except (ValueError, TypeError):
                     existing = []
                 spam_memory[key_hash] = {"trecho": trecho, "logs": list(existing)}
-            ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
+
             ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
             spam_memory[key_hash]["logs"].append({
                 "timestamp": ts_armazenar,
@@ -603,7 +620,9 @@ async def on_message(message):
                 "content": texto_completo,
             })
             spam_memory[key_hash]["trecho"] = trecho
-            logs_para_alerta = list(spam_memory[key_hash]["logs"])
+
+            log_count, logs_dentro_janela = contar_logs_em_janela(spam_memory[key_hash]["logs"])
+
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
             try:
                 spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
@@ -612,10 +631,9 @@ async def on_message(message):
             spam_data_persist = {k: {"trecho": v["trecho"], "logs": v["logs"]} for k, v in spam_memory.items()}
             salvar_spam_logs(spam_data_persist)
 
-            log_count = len(log_history[spam_key])
-            logger.info("AddMoney detectado. Chave: '%s'. Contagem: %s/%s", spam_key, log_count, LOG_COUNT_THRESHOLD)
+            logger.info("AddMoney detectado. Chave: '%s'. Contagem (janela %ss): %s/%s", spam_key, TIME_WINDOW_SECONDS, log_count, LOG_COUNT_THRESHOLD)
 
-            if log_count == LOG_COUNT_THRESHOLD:
+            if log_count >= LOG_COUNT_THRESHOLD:
                 logger.info("!!! ALERTA DE SPAM !!! Chave: %s", spam_key)
                 alerted_logs[spam_key] = now
 
@@ -624,27 +642,25 @@ async def on_message(message):
                 pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
 
                 if not pular_alerta_salario and spam_key:
-                    all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo}]
+                    all_logs = logs_dentro_janela if logs_dentro_janela else [{"content": texto_completo}]
                     all_logs.sort(key=lambda e: e.get("timestamp", ""))
                     log_exibir = all_logs[-1].get("content", texto_completo).strip()
 
-                    hora_atual = now.hour + 1
-                    if hora_atual > 24:
-                        hora_atual = 1
-                    hour_key = f"hour_{hora_atual}"
+                    hora_da_log = ts_da_log.hour
+                    hour_key = f"hour_{hora_da_log}"
 
                     spam_alerts = carregar_spam_alerts()
                     if hour_key not in spam_alerts:
                         spam_alerts[hour_key] = {}
                     if spam_key not in spam_alerts[hour_key]:
                         spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
-                    spam_alerts[hour_key][spam_key]["count"] += LOG_COUNT_THRESHOLD
+                    spam_alerts[hour_key][spam_key]["count"] += log_count
                     spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
                     salvar_spam_alerts(spam_alerts)
 
                     count = spam_alerts[hour_key][spam_key]["count"]
                     for cid in ALERT_CHANNELS:
-                        await enviar_alerta_spam_embed(cid, log_exibir, count, hora_atual)
+                        await enviar_alerta_spam_embed(cid, log_exibir, count, hora_da_log)
                 elif not pular_alerta_salario and not citizenid:
                     trecho_mod = substituir_rhis5udie_por_vip(trecho)
                     alert_message = (
@@ -655,30 +671,25 @@ async def on_message(message):
                     for cid in ALERT_CHANNELS:
                         await enviar_alerta(cid, alert_message, "Alerta Spam")
                 elif pular_alerta_salario and spam_key:
-                    all_logs = logs_para_alerta if logs_para_alerta else [{"content": texto_completo}]
+                    all_logs = logs_dentro_janela if logs_dentro_janela else [{"content": texto_completo}]
                     all_logs.sort(key=lambda e: e.get("timestamp", ""))
                     log_exibir = all_logs[-1].get("content", texto_completo).strip()
 
-                    hora_atual = now.hour + 1
-                    if hora_atual > 24:
-                        hora_atual = 1
-                    hour_key = f"hour_{hora_atual}"
+                    hora_da_log = ts_da_log.hour
+                    hour_key = f"hour_{hora_da_log}"
 
                     spam_alerts = carregar_spam_alerts()
                     if hour_key not in spam_alerts:
                         spam_alerts[hour_key] = {}
                     if spam_key not in spam_alerts[hour_key]:
                         spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
-                    spam_alerts[hour_key][spam_key]["count"] += LOG_COUNT_THRESHOLD
+                    spam_alerts[hour_key][spam_key]["count"] += log_count
                     spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
                     salvar_spam_alerts(spam_alerts)
 
                     count = spam_alerts[hour_key][spam_key]["count"]
                     for cid in SALARY_LEGIT_ALERT_CHANNELS:
-                        await enviar_alerta_spam_salario_embed(cid, log_exibir, count, hora_atual)
-
-                if spam_key in log_history:
-                    del log_history[spam_key]
+                        await enviar_alerta_spam_salario_embed(cid, log_exibir, count, hora_da_log)
 
 
 if __name__ == "__main__":
