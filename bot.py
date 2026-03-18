@@ -569,8 +569,10 @@ async def on_message(message):
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
             logs[citizenid] = [e for e in logs[citizenid] if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff]
             salvar_salary_logs(logs)
+            logger.info("DUMP: $%s (%s) registrado para %s | reason: %s | total: %d logs", valor, tipo, citizenid, reason[:30] if reason else "", len(logs[citizenid]))
             cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
             if cadeia_logs:
+                logger.info("!!! ALERTA DUMP !!! Cadeia ~30min detectada: %s (%d logs)", citizenid, len(cadeia_logs))
                 limpar_chains_antigos(alerted_salary_chains)
                 chain_key = tuple(e["timestamp"] for e in cadeia_logs)
                 ultima = alerted_salary_chains.get(citizenid)
@@ -599,8 +601,10 @@ async def on_message(message):
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
             logs[citizenid] = [e for e in logs[citizenid] if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff]
             salvar_salary_legit_logs(logs)
+            logger.info("LEGÍTIMO: $%s (%s) registrado para %s | reason: %s | total: %d logs", valor_legit, tipo_legit, citizenid, reason_legit[:30] if reason_legit else "", len(logs[citizenid]))
             cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
             if cadeia_logs:
+                logger.info("!!! ALERTA LEGÍTIMO !!! Cadeia ~30min detectada: %s (%d logs)", citizenid, len(cadeia_logs))
                 limpar_chains_antigos(alerted_salary_legit_chains)
                 chain_key = tuple(e["timestamp"] for e in cadeia_logs)
                 ultima = alerted_salary_legit_chains.get(citizenid)
@@ -650,10 +654,10 @@ async def on_message(message):
             spam_data_persist = {k: {"trecho": v["trecho"], "logs": v["logs"]} for k, v in spam_memory.items()}
             salvar_spam_logs(spam_data_persist)
 
-            logger.info("AddMoney detectado. Chave: '%s'. Contagem (janela %ss): %s/%s", spam_key, TIME_WINDOW_SECONDS, log_count, LOG_COUNT_THRESHOLD)
+            logger.info("SPAM: Chave '%s' | Contagem (janela %ss): %s/%s", spam_key, TIME_WINDOW_SECONDS, log_count, LOG_COUNT_THRESHOLD)
 
             if log_count >= LOG_COUNT_THRESHOLD:
-                logger.info("!!! ALERTA DE SPAM !!! Chave: %s", spam_key)
+                logger.info("!!! ALERTA SPAM !!! Chave: %s", spam_key)
                 alerted_logs[spam_key] = now
 
                 match_reason = RE_REASON.search(texto_completo)
