@@ -75,19 +75,15 @@ RE_TIMESTAMP_LOG = re.compile(r"(\d{1,2}:\d{2}:\d{2}\s+\d{2}-\d{2}-\d{4})")
 
 REASONS_SALARIO_LEGITIMOS = ("salario comprado", "salario vip", "juli v")
 
-ORDINAIS = (
-    "PRIMEIRO", "SEGUNDO", "TERCEIRO", "QUARTO", "QUINTO", "SEXTO", "SÉTIMO",
-    "OITAVO", "NONO", "DÉCIMO", "DÉCIMO PRIMEIRO", "DÉCIMO SEGUNDO", "DÉCIMO TERCEIRO",
-    "DÉCIMO QUARTO", "DÉCIMO QUINTO", "DÉCIMO SEXTO", "DÉCIMO SÉTIMO", "DÉCIMO OITAVO",
-    "DÉCIMO NONO", "VIGÉSIMO", "VIGÉSIMO PRIMEIRO", "VIGÉSIMO SEGUNDO", "VIGÉSIMO TERCEIRO",
-    "VIGÉSIMO QUARTO", "VIGÉSIMO QUINTO", "VIGÉSIMO SEXTO", "VIGÉSIMO SÉTIMO",
-    "VIGÉSIMO OITAVO", "VIGÉSIMO NONO", "TRIGÉSIMO",
-)
-
 
 def parse_timestamp(ts_str: str):
-    """Converte string ISO para datetime (timezone-aware)."""
-    return datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    """Converte string ISO para datetime (timezone-aware). Retorna None se inválido."""
+    if not ts_str or not isinstance(ts_str, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 def normalizar_reason(reason: str) -> str:
@@ -207,14 +203,30 @@ def salvar_spam_logs(data):
 
 
 def carregar_spam_alerts():
-    """Carrega spam_alerts.json: { hour_N: { citizenid: { count, last_log } } }"""
+    """Carrega spam_alerts.json: { hour_N: { citizenid: { count, last_log }, _updated: iso } }"""
     try:
         if SPAM_ALERTS_FILE.exists():
             with open(SPAM_ALERTS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            return limpar_spam_alerts_antigos(data)
     except (json.JSONDecodeError, IOError):
         pass
     return {}
+
+
+def limpar_spam_alerts_antigos(data, max_age_hours=24):
+    """Remove hour keys não atualizados nas últimas max_age_hours."""
+    if not data:
+        return data
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=max_age_hours)
+    for key in list(data.keys()):
+        if not key.startswith("hour_"):
+            continue
+        updated = data[key].get("_updated", "")
+        ts = parse_timestamp(updated) if updated else None
+        if ts is not None and ts < cutoff:
+            del data[key]
+    return data
 
 
 def salvar_spam_alerts(data):
@@ -235,13 +247,12 @@ def contar_logs_em_janela(logs_com_ts, window_seconds=TIME_WINDOW_SECONDS):
         return 0, []
     parsed = []
     for e in logs_com_ts:
-        try:
-            ts = parse_timestamp(e.get("timestamp", ""))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=datetime.timezone.utc)
-            parsed.append((ts, e))
-        except (ValueError, TypeError):
+        ts = parse_timestamp(e.get("timestamp", ""))
+        if ts is None:
             continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=datetime.timezone.utc)
+        parsed.append((ts, e))
     if not parsed:
         return 0, []
     ref = max(t for t, _ in parsed)
@@ -249,16 +260,9 @@ def contar_logs_em_janela(logs_com_ts, window_seconds=TIME_WINDOW_SECONDS):
     return len(dentro), dentro
 
 
-def ordinal_ordem(n):
-    """Retorna ordinal em português: 1 -> PRIMEIRO, 2 -> SEGUNDO, etc."""
-    if 1 <= n <= len(ORDINAIS):
-        return ORDINAIS[n - 1]
-    return f"{n}º"
-
-
 def limpar_chains_antigos(chains_dict, max_age_seconds=SALARY_LOG_RETENTION):
     """Remove entradas antigas dos dicionários de chains alertadas."""
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.timezone.utc)
     for key in list(chains_dict.keys()):
         entry = chains_dict[key]
         if isinstance(entry, dict) and "timestamp" in entry:
@@ -274,8 +278,8 @@ def encontrar_cadeia_30min(entries):
     valid = []
     for e in entries:
         try:
-            ts = parse_timestamp(e["timestamp"])
-            if ts > cutoff:
+            ts = parse_timestamp(e.get("timestamp", ""))
+            if ts and ts > cutoff:
                 valid.append((ts, e))
         except (ValueError, KeyError):
             continue
@@ -439,6 +443,25 @@ async def enviar_alerta_spam_embed(canal_id, log_exibir, count, hora_atual, tipo
     return False
 
 
+async def _enviar_alerta_spam_e_atualizar(spam_key, log_exibir, log_count, hora_da_log, now, is_salario=False):
+    """Atualiza spam_alerts e envia alertas. is_salario=True -> canal legítimo."""
+    hour_key = f"hour_{hora_da_log}"
+    spam_alerts = carregar_spam_alerts()
+    if hour_key not in spam_alerts:
+        spam_alerts[hour_key] = {}
+    if spam_key not in spam_alerts[hour_key]:
+        spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
+    spam_alerts[hour_key][spam_key]["count"] += log_count
+    spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
+    spam_alerts[hour_key]["_updated"] = now.isoformat()
+    salvar_spam_alerts(spam_alerts)
+    count = spam_alerts[hour_key][spam_key]["count"]
+    channels = SALARY_LEGIT_ALERT_CHANNELS if is_salario else ALERT_CHANNELS
+    send_fn = enviar_alerta_spam_salario_embed if is_salario else enviar_alerta_spam_embed
+    for cid in channels:
+        await send_fn(cid, log_exibir, count, hora_da_log)
+
+
 async def enviar_alerta_spam_salario_embed(canal_id, log_exibir, count, hora_atual, tipo="Alerta Spam Salário"):
     """Envia alerta de spam de salário legítimo (VIP/Comprado) em embed verde."""
     try:
@@ -470,7 +493,7 @@ async def on_ready():
     logger.info("🤖 Bot Anti Trigger SCC conectado como %s", client.user)
     logger.info("🎯 Canal monitorado: %s", TARGET_CHANNEL_ID)
     logger.info("⏰ Spam: %s logs em %ss", LOG_COUNT_THRESHOLD, TIME_WINDOW_SECONDS)
-    logger.info("📁 Spam: %s | Alertas: %s | Dump: 1471831384837460136 | Legítimo: 1473755075670310942", SPAM_LOG_FILE.name, SPAM_ALERTS_FILE.name)
+    logger.info("📁 Spam: %s | Alertas: %s | Dump: %s | Legítimo: %s", SPAM_LOG_FILE.name, SPAM_ALERTS_FILE.name, SALARY_DUMP_ALERT_CHANNELS, SALARY_LEGIT_ALERT_CHANNELS)
     logger.info("✅ Bot online e monitorando...")
 
 
@@ -544,7 +567,7 @@ async def on_message(message):
                 "content": texto_completo,
             })
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
-            logs[citizenid] = [e for e in logs[citizenid] if parse_timestamp(e["timestamp"]) > cutoff]
+            logs[citizenid] = [e for e in logs[citizenid] if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff]
             salvar_salary_logs(logs)
             cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
             if cadeia_logs:
@@ -574,7 +597,7 @@ async def on_message(message):
                 "content": texto_completo,
             })
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SALARY_LOG_RETENTION)
-            logs[citizenid] = [e for e in logs[citizenid] if parse_timestamp(e["timestamp"]) > cutoff]
+            logs[citizenid] = [e for e in logs[citizenid] if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff]
             salvar_salary_legit_logs(logs)
             cadeia_logs = encontrar_cadeia_30min(logs[citizenid])
             if cadeia_logs:
@@ -591,6 +614,8 @@ async def on_message(message):
         # --- Spam (lógica baseada no horário da log, armazenado em JSON) ---
         ts_display, ts_iso = extrair_timestamp_da_log(texto_completo)
         ts_da_log = parse_timestamp(ts_iso) if ts_iso else now
+        if ts_da_log is None:
+            ts_da_log = now
         if ts_da_log.tzinfo is None:
             ts_da_log = ts_da_log.replace(tzinfo=datetime.timezone.utc)
 
@@ -607,10 +632,7 @@ async def on_message(message):
             if key_hash not in spam_memory:
                 disk_data = carregar_spam_logs()
                 existing = disk_data.get(key_hash, {}).get("logs", [])
-                try:
-                    existing = [e for e in existing if parse_timestamp(e.get("timestamp", "")) > cutoff_load]
-                except (ValueError, TypeError):
-                    existing = []
+                existing = [e for e in existing if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff_load]
                 spam_memory[key_hash] = {"trecho": trecho, "logs": list(existing)}
 
             ts_armazenar = ts_iso if ts_iso else datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -624,10 +646,7 @@ async def on_message(message):
             log_count, logs_dentro_janela = contar_logs_em_janela(spam_memory[key_hash]["logs"])
 
             cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SPAM_LOG_RETENTION)
-            try:
-                spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if parse_timestamp(e.get("timestamp", "")) > cutoff]
-            except (ValueError, TypeError):
-                spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if e.get("timestamp")]
+            spam_memory[key_hash]["logs"] = [e for e in spam_memory[key_hash]["logs"] if (t := parse_timestamp(e.get("timestamp", ""))) and t > cutoff]
             spam_data_persist = {k: {"trecho": v["trecho"], "logs": v["logs"]} for k, v in spam_memory.items()}
             salvar_spam_logs(spam_data_persist)
 
@@ -641,55 +660,17 @@ async def on_message(message):
                 reason = normalizar_reason(match_reason.group(1).strip()) if match_reason else ""
                 pular_alerta_salario = reason in REASONS_SALARIO_LEGITIMOS
 
+                all_logs = logs_dentro_janela if logs_dentro_janela else [{"content": texto_completo}]
+                all_logs.sort(key=lambda e: e.get("timestamp", ""))
+                log_exibir = all_logs[-1].get("content", texto_completo).strip()
+                hora_da_log = ts_da_log.hour
+
                 if not pular_alerta_salario and spam_key:
-                    all_logs = logs_dentro_janela if logs_dentro_janela else [{"content": texto_completo}]
-                    all_logs.sort(key=lambda e: e.get("timestamp", ""))
-                    log_exibir = all_logs[-1].get("content", texto_completo).strip()
-
-                    hora_da_log = ts_da_log.hour
-                    hour_key = f"hour_{hora_da_log}"
-
-                    spam_alerts = carregar_spam_alerts()
-                    if hour_key not in spam_alerts:
-                        spam_alerts[hour_key] = {}
-                    if spam_key not in spam_alerts[hour_key]:
-                        spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
-                    spam_alerts[hour_key][spam_key]["count"] += log_count
-                    spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
-                    salvar_spam_alerts(spam_alerts)
-
-                    count = spam_alerts[hour_key][spam_key]["count"]
-                    for cid in ALERT_CHANNELS:
-                        await enviar_alerta_spam_embed(cid, log_exibir, count, hora_da_log)
+                    await _enviar_alerta_spam_e_atualizar(spam_key, log_exibir, log_count, hora_da_log, now, is_salario=False)
                 elif not pular_alerta_salario and not citizenid:
-                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
-                    alert_message = (
-                        f"@everyone ALERTA DE SPAM DETECTADO!\n\n"
-                        f"{texto_completo.strip()}\n\n"
-                        f"LOG SUSPEITO DETECTADO 🧑🏻‍🎄"
-                    )
-                    for cid in ALERT_CHANNELS:
-                        await enviar_alerta(cid, alert_message, "Alerta Spam")
+                    await _enviar_alerta_spam_e_atualizar(spam_key, log_exibir, log_count, hora_da_log, now, is_salario=False)
                 elif pular_alerta_salario and spam_key:
-                    all_logs = logs_dentro_janela if logs_dentro_janela else [{"content": texto_completo}]
-                    all_logs.sort(key=lambda e: e.get("timestamp", ""))
-                    log_exibir = all_logs[-1].get("content", texto_completo).strip()
-
-                    hora_da_log = ts_da_log.hour
-                    hour_key = f"hour_{hora_da_log}"
-
-                    spam_alerts = carregar_spam_alerts()
-                    if hour_key not in spam_alerts:
-                        spam_alerts[hour_key] = {}
-                    if spam_key not in spam_alerts[hour_key]:
-                        spam_alerts[hour_key][spam_key] = {"count": 0, "last_log": ""}
-                    spam_alerts[hour_key][spam_key]["count"] += log_count
-                    spam_alerts[hour_key][spam_key]["last_log"] = log_exibir
-                    salvar_spam_alerts(spam_alerts)
-
-                    count = spam_alerts[hour_key][spam_key]["count"]
-                    for cid in SALARY_LEGIT_ALERT_CHANNELS:
-                        await enviar_alerta_spam_salario_embed(cid, log_exibir, count, hora_da_log)
+                    await _enviar_alerta_spam_e_atualizar(spam_key, log_exibir, log_count, hora_da_log, now, is_salario=True)
 
 
 if __name__ == "__main__":
