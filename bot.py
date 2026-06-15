@@ -68,7 +68,7 @@ DISCORD_MESSAGE_LIMIT = 2000
 
 # --- REGEX COMPILADOS ---
 RE_TECHO = re.compile(r"(\*\*.*?added)")
-RE_RHIS5UDIE = re.compile(r"rhis5udie(_dlc)?")
+RE_MOEDA_INTERNA = re.compile(r"(?:kiuds0626|rhis5udie)(_dlc)?", re.IGNORECASE)
 RE_CITIZENID = re.compile(r"citizenid:\s*([A-Z0-9]+)", re.IGNORECASE)
 RE_REASON = re.compile(r"reason:\s*([^\n*]+)", re.IGNORECASE)
 RE_VALOR = re.compile(r"\$(\d+)")
@@ -106,8 +106,11 @@ def extrair_trecho(texto):
     return match.group(1) if match else None
 
 
-def substituir_rhis5udie_por_vip(texto):
-    return RE_RHIS5UDIE.sub(r"vip\1", texto)
+def mascarar_nome_moeda(texto):
+    """Substitui identificadores internos da moeda por VIP / DLC nos alertas."""
+    def _repl(m):
+        return "DLC" if m.group(1) else "VIP"
+    return RE_MOEDA_INTERNA.sub(_repl, texto or "")
 
 
 def extrair_citizenid(texto):
@@ -370,7 +373,7 @@ async def enviar_alerta_dump_embed(canal_id, trecho_mod, citizenid, cadeia_logs,
             return False
         def fmt(e):
             c = e.get("content", "")
-            return c.strip() if c else f"${e.get('value')} ({e.get('type', 'bank')}) - {e.get('reason', '')}"
+            return mascarar_nome_moeda(c.strip() if c else f"${e.get('value')} ({e.get('type', 'bank')}) - {e.get('reason', '')}")
         logs_texto = "\n\n---\n\n".join(fmt(e) for e in cadeia_logs)
         logs_trunc = logs_texto[:4000] + "..." if len(logs_texto) > 4000 else logs_texto
         embed = discord.Embed(
@@ -400,7 +403,7 @@ async def enviar_alerta_legit_embed(canal_id, trecho_mod, citizenid, cadeia_logs
             return False
         def fmt(e):
             c = e.get("content", "")
-            return c.strip() if c else f"${e.get('value')} ({e.get('type', 'bank')}) - {e.get('reason', '')}"
+            return mascarar_nome_moeda(c.strip() if c else f"${e.get('value')} ({e.get('type', 'bank')}) - {e.get('reason', '')}")
         logs_texto = "\n\n---\n\n".join(fmt(e) for e in cadeia_logs)
         logs_trunc = logs_texto[:4000] + "..." if len(logs_texto) > 4000 else logs_texto
         embed = discord.Embed(
@@ -428,7 +431,7 @@ async def enviar_alerta_spam_embed(canal_id, log_exibir, count, hora_atual, tipo
         if not channel:
             logger.warning("Canal não encontrado: %s", canal_id)
             return False
-        log_trunc = log_exibir[:4000] + "..." if len(log_exibir) > 4000 else log_exibir
+        log_trunc = mascarar_nome_moeda(log_exibir[:4000] + "..." if len(log_exibir) > 4000 else log_exibir)
         embed = discord.Embed(
             title=f"🚨 SPAM DETECTADO — {count}x",
             description=log_trunc,
@@ -473,7 +476,7 @@ async def enviar_alerta_spam_salario_embed(canal_id, log_exibir, count, hora_atu
         if not channel:
             logger.warning("Canal não encontrado: %s", canal_id)
             return False
-        log_trunc = log_exibir[:4000] + "..." if len(log_exibir) > 4000 else log_exibir
+        log_trunc = mascarar_nome_moeda(log_exibir[:4000] + "..." if len(log_exibir) > 4000 else log_exibir)
         embed = discord.Embed(
             title=f"SPAM DE SALARIO - {count}x",
             description=log_trunc,
@@ -583,7 +586,7 @@ async def on_message(message):
                 ultima_chain = ultima.get("chain") if isinstance(ultima, dict) else ultima
                 if not (ultima_chain == chain_key):
                     alerted_salary_chains[citizenid] = {"chain": chain_key, "timestamp": now}
-                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                    trecho_mod = mascarar_nome_moeda(trecho)
                     for cid in SALARY_DUMP_ALERT_CHANNELS:
                         await enviar_alerta_dump_embed(cid, trecho_mod, citizenid, cadeia_logs)
 
@@ -615,7 +618,7 @@ async def on_message(message):
                 ultima_chain = ultima.get("chain") if isinstance(ultima, dict) else ultima
                 if not (ultima_chain == chain_key):
                     alerted_salary_legit_chains[citizenid] = {"chain": chain_key, "timestamp": now}
-                    trecho_mod = substituir_rhis5udie_por_vip(trecho)
+                    trecho_mod = mascarar_nome_moeda(trecho)
                     for cid in SALARY_LEGIT_ALERT_CHANNELS:
                         await enviar_alerta_legit_embed(cid, trecho_mod, citizenid, cadeia_logs)
 
@@ -673,7 +676,7 @@ async def on_message(message):
 
                 all_logs = logs_dentro_janela if logs_dentro_janela else [{"content": texto_completo}]
                 all_logs.sort(key=lambda e: e.get("timestamp", ""))
-                log_exibir = all_logs[-1].get("content", texto_completo).strip()
+                log_exibir = mascarar_nome_moeda(all_logs[-1].get("content", texto_completo).strip())
                 hora_da_log = ts_da_log.hour
 
                 if not pular_alerta_salario and spam_key:
